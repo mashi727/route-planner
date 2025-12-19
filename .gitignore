@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Cache and database
+elevation_cache.db
+*.db
+
+# Data files (user-specific)
+data/
+*.csv
+*.kml
+*.json
+!package.json
+
+# History and temporary
+.search_history.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Legacy files (not used)
+ver11.py
+Ui_GLW_Map2.py
+commands/
+
+# Logs
+*.log

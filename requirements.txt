@@ -1,0 +1,11 @@
+# GUI
+PySide6>=6.6.0
+pyqtgraph>=0.13.0
+
+# Data processing
+numpy>=1.24.0
+pandas>=2.0.0
+Pillow>=10.0.0
+
+# HTTP requests
+requests>=2.31.0

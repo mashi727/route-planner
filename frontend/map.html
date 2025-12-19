@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { width: 100%; height: 100vh; }
+        .info-box {
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            z-index: 1000;
+            background: rgba(30, 30, 46, 0.9);
+            color: #cdd6f4;
+            padding: 10px 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            font-size: 13px;
+            font-family: 'Hiragino Sans', sans-serif;
+            border: 1px solid #45475a;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="info-box">クリックでポイント追加 / ドラッグで移動</div>
+    <script>
+        var map = L.map('map').setView([35.6812, 139.7671], 10);
+
+        L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+            maxZoom: 18
+        }).addTo(map);
+
+        var markers = [];
+        var routeLine = null;
+        var regionLine = null;  // 選択範囲のハイライトライン
+
+        // イベントキュー（Pythonから取得される）
+        var eventQueue = [];
+
+        // 地図クリックイベント
+        map.on('click', function(e) {
+            eventQueue.push({
+                type: 'add',
+                lat: e.latlng.lat,
+                lng: e.latlng.lng
+            });
+        });
+
+        // イベントを取得してクリア
+        function getEvents() {
+            var events = JSON.stringify(eventQueue);
+            eventQueue = [];
+            return events;
+        }
+
+        // カスタムマーカーアイコンを作成
+        function createMarkerIcon(number, color, isStart, isEnd) {
+            var size = 32;
+            var html = '';
+
+            if (isStart) {
+                // 始点: 緑の旗アイコン
+                html = '<div style="background-color: #40a02b; color: white; width: ' + size + 'px; height: ' + size + 'px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"><span style="transform: rotate(45deg); font-weight: bold; font-size: 18px;">S</span></div>';
+            } else if (isEnd) {
+                // 終点: 赤の旗アイコン
+                html = '<div style="background-color: #d20f39; color: white; width: ' + size + 'px; height: ' + size + 'px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"><span style="transform: rotate(45deg); font-weight: bold; font-size: 18px;">G</span></div>';
+            } else {
+                // 経由地: 青の番号付きマーカー
+                html = '<div style="background-color: #1e66f5; color: white; width: ' + size + 'px; height: ' + size + 'px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.5); font-weight: bold; font-size: 18px;">' + number + '</div>';
+            }
+
+            return L.divIcon({
+                html: html,
+                className: '',
+                iconSize: [size, size],
+                iconAnchor: isStart || isEnd ? [size/4, size] : [size/2, size/2]
+            });
+        }
+
+        // マーカー追加（ドラッグ可能）
+        function addMarker(lat, lng, label, index, autoZoom, totalCount) {
+            var isStart = (index === 0);
+            var isEnd = (index === totalCount - 1) && (totalCount > 1);
+            var icon = createMarkerIcon(index + 1, null, isStart, isEnd);
+
+            var marker = L.marker([lat, lng], {draggable: true, icon: icon}).addTo(map);
+            marker.bindPopup(label);
+            marker.myIndex = index;
+
+            // ドラッグ終了時
+            marker.on('dragend', function(e) {
+                var pos = e.target.getLatLng();
+                eventQueue.push({
+                    type: 'move',
+                    index: marker.myIndex,
+                    lat: pos.lat,
+                    lng: pos.lng
+                });
+            });
+
+            markers.push(marker);
+            // 最後のマーカー追加時のみupdateView（全マーカー追加後にfitBounds）
+            if (autoZoom && index === totalCount - 1) {
+                updateView();
+            }
+        }
+
+        // マーカー全削除
+        function clearMarkers() {
+            markers.forEach(function(m) { map.removeLayer(m); });
+            markers = [];
+            if (routeLine) {
+                map.removeLayer(routeLine);
+                routeLine = null;
+            }
+        }
+
+        // マーカーを一括設定（既存マーカーをクリアして新規追加）
+        function setMarkers(waypoints) {
+            // 既存マーカーをクリア
+            markers.forEach(function(m) { map.removeLayer(m); });
+            markers = [];
+
+            if (!waypoints || waypoints.length === 0) return;
+            var totalCount = waypoints.length;
+
+            waypoints.forEach(function(wp, index) {
+                var isStart = (index === 0);
+                var isEnd = (index === totalCount - 1) && (totalCount > 1);
+                var icon = createMarkerIcon(index + 1, null, isStart, isEnd);
+
+                var marker = L.marker([wp.lat, wp.lng], {draggable: true, icon: icon}).addTo(map);
+                marker.bindPopup(wp.label);
+                marker.myIndex = index;
+
+                marker.on('dragend', function(e) {
+                    var pos = e.target.getLatLng();
+                    eventQueue.push({
+                        type: 'move',
+                        index: marker.myIndex,
+                        lat: pos.lat,
+                        lng: pos.lng
+                    });
+                });
+
+                markers.push(marker);
+            });
+
+        }
+
+        // fitBoundsを実行（Python側から呼び出す用）
+        function doFitBounds(minLat, minLng, maxLat, maxLng) {
+            if (minLat === maxLat && minLng === maxLng) {
+                // 1点のみの場合
+                map.setView([minLat, minLng], 13);
+            } else {
+                map.fitBounds([[minLat, minLng], [maxLat, maxLng]], {padding: [50, 50]});
+            }
+        }
+
+        // ルート描画
+        function drawRoute(coords) {
+            if (routeLine) {
+                map.removeLayer(routeLine);
+            }
+            routeLine = L.polyline(coords, {
+                color: '#1e66f5',
+                weight: 5,
+                opacity: 0.95
+            }).addTo(map);
+        }
+
+        // 選択範囲のハイライトライン描画
+        function drawRegionLine(coords) {
+            if (regionLine) {
+                map.removeLayer(regionLine);
+                regionLine = null;
+            }
+            if (coords && coords.length > 0) {
+                regionLine = L.polyline(coords, {color: '#ea76cb', weight: 6}).addTo(map);
+            }
+        }
+
+        // ハイライトラインをクリア
+        function clearRegionLine() {
+            if (regionLine) {
+                map.removeLayer(regionLine);
+                regionLine = null;
+            }
+        }
+
+        // 選択範囲に地図をフィット
+        function fitToRegion(coords) {
+            if (coords && coords.length > 0) {
+                var bounds = L.latLngBounds(coords);
+                map.fitBounds(bounds, {padding: [30, 30]});
+            }
+        }
+
+        // Region端マーカー
+        var regionStartMarker = null;
+        var regionEndMarker = null;
+
+        // Region端マーカーを更新（始点:緑、終点:マゼンタ）
+        function updateRegionMarkers(startLat, startLng, endLat, endLng) {
+            // 始点マーカー（緑）
+            if (regionStartMarker) {
+                map.removeLayer(regionStartMarker);
+            }
+            var startIcon = L.divIcon({
+                html: '<div style="background-color: #40a02b; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.5);"></div>',
+                className: '',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            regionStartMarker = L.marker([startLat, startLng], {icon: startIcon, interactive: false}).addTo(map);
+
+            // 終点マーカー（マゼンタ）
+            if (regionEndMarker) {
+                map.removeLayer(regionEndMarker);
+            }
+            var endIcon = L.divIcon({
+                html: '<div style="background-color: #ea76cb; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.5);"></div>',
+                className: '',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            regionEndMarker = L.marker([endLat, endLng], {icon: endIcon, interactive: false}).addTo(map);
+        }
+
+        // Region端マーカーをクリア
+        function clearRegionMarkers() {
+            if (regionStartMarker) {
+                map.removeLayer(regionStartMarker);
+                regionStartMarker = null;
+            }
+            if (regionEndMarker) {
+                map.removeLayer(regionEndMarker);
+                regionEndMarker = null;
+            }
+        }
+
+        // 表示範囲を調整（マーカーとルートを含む）
+        function updateView() {
+            console.log('updateView called, markers:', markers.length);
+            var bounds = null;
+
+            if (markers.length > 0) {
+                bounds = L.featureGroup(markers).getBounds();
+            }
+
+            if (routeLine) {
+                var routeBounds = routeLine.getBounds();
+                if (bounds) {
+                    bounds.extend(routeBounds);
+                } else {
+                    bounds = routeBounds;
+                }
+            }
+
+            if (bounds && bounds.isValid()) {
+                map.fitBounds(bounds, {padding: [50, 50]});
+            }
+        }
+    </script>
+</body>
+</html>
