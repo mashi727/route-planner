@@ -2,6 +2,15 @@
 
 自転車ルート計画ツール。出発地・経由地・目的地を指定して、事前に斜度や走行距離を把握できます。
 
+## ダウンロード
+
+| OS | ダウンロード |
+|----|-------------|
+| macOS | [RoutePlanner-macOS.dmg](https://github.com/mashi727/route-planner/releases/latest/download/RoutePlanner-macOS.dmg) |
+| Windows | [RoutePlanner.exe](https://github.com/mashi727/route-planner/releases/latest/download/RoutePlanner.exe) |
+
+> **Note**: 初回起動時にAPIキーの設定が必要です（下記参照）
+
 ## 機能
 
 - **ルート計算**: OpenRouteServiceを使用した自転車ルート計算
