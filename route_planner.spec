@@ -107,17 +107,21 @@ if is_macos:
         },
     )
 else:
-    # Windows: onedir モード（DLLロードエラー回避）
+    # Windows: onefile モード（upx=Falseで DLLエラー回避）
     exe = EXE(
         pyz,
         a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
         [],
-        exclude_binaries=True,
         name='RoutePlanner',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
         upx=False,  # UPX無効（DLLエラー回避）
+        upx_exclude=[],
+        runtime_tmpdir=None,
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
@@ -125,14 +129,4 @@ else:
         codesign_identity=None,
         entitlements_file=None,
         icon='assets/icon.ico',
-    )
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
-        strip=False,
-        upx=False,
-        upx_exclude=[],
-        name='RoutePlanner',
     )

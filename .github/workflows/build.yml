@@ -69,15 +69,11 @@ jobs:
         run: |
           python -m PyInstaller route_planner.spec
 
-      - name: Create ZIP
-        run: |
-          Compress-Archive -Path dist/RoutePlanner -DestinationPath RoutePlanner-Windows.zip
-
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: RoutePlanner-Windows
-          path: RoutePlanner-Windows.zip
+          path: dist/RoutePlanner.exe
 
   release:
     needs: [build-macos, build-windows]
@@ -96,7 +92,7 @@ jobs:
         with:
           files: |
             artifacts/RoutePlanner-macOS/RoutePlanner-macOS.dmg
-            artifacts/RoutePlanner-Windows/RoutePlanner-Windows.zip
+            artifacts/RoutePlanner-Windows/RoutePlanner.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
