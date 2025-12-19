@@ -7,7 +7,6 @@ macOS: python -m PyInstaller route_planner.spec
 
 import sys
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
@@ -36,9 +35,6 @@ hiddenimports = [
     'PIL',
     'requests',
 ]
-
-# PySide6のデータファイルを収集
-datas += collect_data_files('PySide6', include_py_files=False)
 
 a = Analysis(
     ['route_planner.py'],

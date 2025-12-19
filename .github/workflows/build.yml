@@ -31,7 +31,8 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          python -m PyInstaller route_planner.spec
+          rm -rf build dist
+          python -m PyInstaller --noconfirm --clean route_planner.spec
 
       - name: Create DMG
         run: |
@@ -67,7 +68,9 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          python -m PyInstaller route_planner.spec
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          python -m PyInstaller --noconfirm --clean route_planner.spec
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
