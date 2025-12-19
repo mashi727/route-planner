@@ -239,7 +239,7 @@ class RoutePlanner(QMainWindow):
 
         # SerpApi設定
         serpapi_layout = QHBoxLayout()
-        self.serpapi_checkbox = QCheckBox("Google検索を使用")
+        self.serpapi_checkbox = QCheckBox("SerpAPI使用")
         self.serpapi_checkbox.setChecked(False)  # デフォルトはOFF
         self.serpapi_checkbox.stateChanged.connect(self.on_serpapi_checkbox_changed)
         serpapi_layout.addWidget(self.serpapi_checkbox)
