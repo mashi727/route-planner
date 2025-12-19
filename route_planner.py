@@ -36,8 +36,8 @@ class RoutePlanner(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ルートプランナー")
-        # ウィンドウサイズを固定
-        self.setFixedSize(1700, 1350)
+        # ウィンドウサイズを固定（地図800x800、15%拡大）
+        self.setFixedSize(1700, 1250)
 
         self.waypoints = []  # [(lat, lng, name), ...]
         self.route_coordinates = []  # ルート座標
@@ -277,7 +277,6 @@ class RoutePlanner(QMainWindow):
         # 左: ポイントリスト
         self.point_list = QListWidget()
         self.point_list.setDragDropMode(QAbstractItemView.InternalMove)
-        self.point_list.setMaximumHeight(150)
         self.point_list.model().rowsMoved.connect(self.on_points_reordered)
         list_layout.addWidget(self.point_list, stretch=1)
 
