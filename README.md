@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 1. **OpenRouteService** (ルート計算用)
    - https://openrouteservice.org/ でアカウント作成
-   - APIキーを `~/.token/openstreetmap/api_key` に保存
+   - APIキーを `~/.apikey/OpenRouteService` に保存
 
 2. **SerpAPI** (Google検索によるジオコーディング用、オプション)
    - https://serpapi.com/ でアカウント作成
