@@ -8,7 +8,7 @@ from pathlib import Path
 
 # APIキーファイルのパス
 API_KEY_PATHS = {
-    "openrouteservice": Path.home() / ".token" / "openstreetmap" / "api_key",
+    "openrouteservice": Path.home() / ".apikey" / "OpenRouteService",
     "serpapi": Path.home() / ".apikey" / "SerpApi",
 }
 
