@@ -285,7 +285,7 @@ class RoutePlanner(QMainWindow):
 
         # 下部: 自動フィットチェックボックス
         self.auto_fit_checkbox = QCheckBox("ポイント変更時に地図を自動フィット")
-        self.auto_fit_checkbox.setChecked(False)
+        self.auto_fit_checkbox.setChecked(True)
         self.auto_fit_checkbox.stateChanged.connect(self.on_auto_fit_changed)
         list_group_layout.addWidget(self.auto_fit_checkbox)
 
