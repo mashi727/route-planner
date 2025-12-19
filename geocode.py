@@ -5,15 +5,25 @@
 
 import re
 import sys
+from pathlib import Path
 
 import requests
 
 from config import load_api_key as _load_api_key
 
+# カスタムキーパス（Noneの場合はデフォルトパスを使用）
+_custom_key_path: Path | None = None
+
+
+def set_api_key_path(path: Path | None) -> None:
+    """SerpAPI キーファイルのカスタムパスを設定"""
+    global _custom_key_path
+    _custom_key_path = path
+
 
 def load_api_key() -> str:
     """SerpAPI用のAPIキーを読み込む"""
-    key = _load_api_key("serpapi")
+    key = _load_api_key("serpapi", _custom_key_path)
     if key is None:
         raise FileNotFoundError("SerpAPI APIキーが見つかりません")
     return key

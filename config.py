@@ -13,17 +13,33 @@ API_KEY_PATHS = {
 }
 
 
-def load_api_key(service: str) -> str | None:
+def get_api_key_path(service: str) -> Path | None:
     """
-    指定されたサービスのAPIキーを読み込む
+    指定されたサービスのAPIキーファイルパスを取得
 
     Args:
         service: サービス名 ("openrouteservice", "serpapi")
 
     Returns:
+        パス、または未知のサービスの場合はNone
+    """
+    return API_KEY_PATHS.get(service)
+
+
+def load_api_key(service: str, key_path: Path | None = None) -> str | None:
+    """
+    指定されたサービスのAPIキーを読み込む
+
+    Args:
+        service: サービス名 ("openrouteservice", "serpapi")
+        key_path: カスタムキーファイルパス（省略時はデフォルトパス）
+
+    Returns:
         APIキー文字列、または見つからない場合はNone
     """
-    key_path = API_KEY_PATHS.get(service)
+    if key_path is None:
+        key_path = API_KEY_PATHS.get(service)
+
     if key_path is None:
         raise ValueError(f"未知のサービス: {service}")
 

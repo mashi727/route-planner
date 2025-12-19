@@ -240,15 +240,18 @@ class RoutePlanner(QMainWindow):
         # SerpApi設定
         serpapi_layout = QHBoxLayout()
         self.serpapi_checkbox = QCheckBox("Google検索を使用")
-        self.serpapi_checkbox.setChecked(True)
+        self.serpapi_checkbox.setChecked(False)  # デフォルトはOFF
+        self.serpapi_checkbox.stateChanged.connect(self.on_serpapi_checkbox_changed)
         serpapi_layout.addWidget(self.serpapi_checkbox)
         self.serpapi_remaining_label = QLabel("")
         serpapi_layout.addWidget(self.serpapi_remaining_label)
         serpapi_layout.addStretch()
         search_layout.addLayout(serpapi_layout)
 
-        # SerpApi残り回数を更新
-        self.update_serpapi_remaining()
+        # SerpApiキーのパスを保持
+        self._serpapi_key_path = None
+
+        # 起動時はSerpApi情報を取得しない（OFFなので）
 
         right_layout.addWidget(search_group)
 
@@ -1135,6 +1138,68 @@ class RoutePlanner(QMainWindow):
         self.cache_label.setText(
             f"キャッシュ: {stats['tile_count']}タイル / {stats['db_size_mb']:.1f}MB"
         )
+
+    def on_serpapi_checkbox_changed(self, state):
+        """SerpApiチェックボックスの状態変更"""
+        from geocode import set_api_key_path
+        from config import get_api_key_path, load_api_key
+
+        if state != 2:  # 2 = Checked
+            self.serpapi_remaining_label.setText("")
+            return
+
+        # ONにした場合、APIキーを確認
+
+        # まず保存されたカスタムパスを確認
+        if self._serpapi_key_path and self._serpapi_key_path.exists():
+            key = load_api_key("serpapi", self._serpapi_key_path)
+            if key:
+                set_api_key_path(self._serpapi_key_path)
+                self.update_serpapi_remaining()
+                return
+
+        # デフォルトパスを確認
+        default_path = get_api_key_path("serpapi")
+        if default_path and default_path.exists():
+            key = load_api_key("serpapi")
+            if key:
+                self._serpapi_key_path = default_path
+                set_api_key_path(default_path)
+                self.update_serpapi_remaining()
+                return
+
+        # キーが見つからない場合、ファイル選択ダイアログを表示
+        msg = QMessageBox(self)
+        msg.setWindowTitle("SerpAPI キー")
+        msg.setText(f"SerpAPI キーファイルが見つかりません。\n\nデフォルトの場所:\n{default_path}")
+        msg.setInformativeText("キーファイルの場所を指定しますか？")
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.Yes)
+
+        if msg.exec() == QMessageBox.Yes:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "SerpAPI キーファイルを選択",
+                str(Path.home()),
+                "All Files (*)"
+            )
+            if file_path:
+                key_path = Path(file_path)
+                try:
+                    key = key_path.read_text().strip()
+                    if key:
+                        self._serpapi_key_path = key_path
+                        set_api_key_path(key_path)
+                        self.update_serpapi_remaining()
+                        return
+                except Exception as e:
+                    QMessageBox.warning(self, "エラー", f"キーファイルの読み込みに失敗しました:\n{e}")
+
+        # キーが確認できなかった場合、チェックボックスをOFFに戻す
+        self.serpapi_checkbox.blockSignals(True)
+        self.serpapi_checkbox.setChecked(False)
+        self.serpapi_checkbox.blockSignals(False)
+        self.serpapi_remaining_label.setText("(キー未設定)")
 
     def update_serpapi_remaining(self):
         """SerpApi残りリクエスト数を更新"""
