@@ -61,8 +61,12 @@ class RoutePlanner(QMainWindow):
         self.init_ui()
         self.load_map()
 
-    def closeEvent(self, event):
-        """アプリケーション終了時のクリーンアップ"""
+    def cleanup(self):
+        """リソースのクリーンアップ"""
+        if getattr(self, '_cleaned_up', False):
+            return
+        self._cleaned_up = True
+
         # すべてのタイマーを停止
         if hasattr(self, 'poll_timer'):
             self.poll_timer.stop()
@@ -80,9 +84,15 @@ class RoutePlanner(QMainWindow):
                 pass
             # ページをクリアしてから削除
             self.map_view.setUrl(QUrl("about:blank"))
+            # イベント処理を行って確実にクリーンアップ
+            QApplication.processEvents()
             self.map_view.page().deleteLater()
             self.map_view.deleteLater()
+            QApplication.processEvents()
 
+    def closeEvent(self, event):
+        """アプリケーション終了時のクリーンアップ"""
+        self.cleanup()
         event.accept()
 
     def init_ui(self):
@@ -1882,6 +1892,10 @@ def main():
     app.setQuitOnLastWindowClosed(True)
 
     window = RoutePlanner()
+
+    # Cmd-Q等でのアプリ終了時にも確実にクリーンアップ
+    app.aboutToQuit.connect(window.cleanup)
+
     # 初期テーマを適用
     window.apply_theme("dark")
     window.show()
