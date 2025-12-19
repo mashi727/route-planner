@@ -37,7 +37,7 @@ class RoutePlanner(QMainWindow):
         super().__init__()
         self.setWindowTitle("ルートプランナー")
         # ウィンドウサイズを固定（地図800x800、15%拡大）
-        self.setFixedSize(1700, 1250)
+        self.setFixedSize(1500, 1050)
 
         self.waypoints = []  # [(lat, lng, name), ...]
         self.route_coordinates = []  # ルート座標
@@ -76,22 +76,24 @@ class RoutePlanner(QMainWindow):
             self.search_timer.stop()
 
         # WebEngineViewのクリーンアップ
-        if hasattr(self, 'map_view'):
-            # シグナル接続を切断
+        if hasattr(self, 'map_view') and self.map_view is not None:
             try:
+                # シグナル接続を切断
                 self.map_view.loadFinished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                # ページの読み込みを停止
+                self.map_view.stop()
+                # 空白ページに移動
+                self.map_view.setUrl(QUrl("about:blank"))
+                QApplication.processEvents()
             except RuntimeError:
                 pass
-            # ページをクリアしてから削除
-            self.map_view.setUrl(QUrl("about:blank"))
-            # イベント処理を行って確実にクリーンアップ
-            QApplication.processEvents()
-            self.map_view.page().deleteLater()
-            self.map_view.deleteLater()
-            QApplication.processEvents()
 
     def closeEvent(self, event):
         """アプリケーション終了時のクリーンアップ"""
+        self.hide()  # まずウィンドウを隠す
         self.cleanup()
         event.accept()
 
@@ -140,13 +142,13 @@ class RoutePlanner(QMainWindow):
 
         # 地図（1220x1020）
         self.map_view = QWebEngineView()
-        self.map_view.setFixedSize(1220, 820)
+        self.map_view.setFixedSize(1020, 650)
         self.map_view.setContextMenuPolicy(Qt.NoContextMenu)  # 右クリックメニュー無効化
         left_layout.addWidget(self.map_view)
 
         # グラフ（ver11.pyスタイル: 高度、斜度、Region、ヒストグラム）
         self.graph_widget = pg.GraphicsLayoutWidget()
-        self.graph_widget.setMinimumHeight(350)
+        self.graph_widget.setMinimumHeight(320)
 
         # プロットエリアを確保
         self.dist_plot = self.graph_widget.addPlot(row=0, col=0)
@@ -158,7 +160,7 @@ class RoutePlanner(QMainWindow):
         self.graph_widget.ci.layout.setColumnStretchFactor(0, 3)
         self.graph_widget.ci.layout.setColumnStretchFactor(1, 1)
         self.graph_widget.ci.layout.setRowStretchFactor(0, 10)
-        self.graph_widget.ci.layout.setRowStretchFactor(1, 10)
+        self.graph_widget.ci.layout.setRowStretchFactor(1, 6)
         self.graph_widget.ci.layout.setRowStretchFactor(2, 1)
 
         # 高度グラフ設定
