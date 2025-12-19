@@ -63,13 +63,26 @@ class RoutePlanner(QMainWindow):
 
     def closeEvent(self, event):
         """アプリケーション終了時のクリーンアップ"""
-        # イベントポーリングタイマーを停止
-        if hasattr(self, 'event_timer'):
-            self.event_timer.stop()
-        # WebEngineViewのページを明示的にクリア
+        # すべてのタイマーを停止
+        if hasattr(self, 'poll_timer'):
+            self.poll_timer.stop()
+        if hasattr(self, 'fit_timer'):
+            self.fit_timer.stop()
+        if hasattr(self, 'search_timer'):
+            self.search_timer.stop()
+
+        # WebEngineViewのクリーンアップ
         if hasattr(self, 'map_view'):
+            # シグナル接続を切断
+            try:
+                self.map_view.loadFinished.disconnect()
+            except RuntimeError:
+                pass
+            # ページをクリアしてから削除
             self.map_view.setUrl(QUrl("about:blank"))
             self.map_view.page().deleteLater()
+            self.map_view.deleteLater()
+
         event.accept()
 
     def init_ui(self):
@@ -1794,12 +1807,27 @@ class RoutePlanner(QMainWindow):
 
 
 def main():
+    # QWebEngineのクラッシュを防ぐための設定
+    import os
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
+
     app = QApplication(sys.argv)
+
+    # アプリケーション終了時のクリーンアップを確実に
+    app.setQuitOnLastWindowClosed(True)
+
     window = RoutePlanner()
     # 初期テーマを適用
     window.apply_theme("dark")
     window.show()
-    sys.exit(app.exec())
+
+    # 終了コードを取得してから終了
+    ret = app.exec()
+
+    # 明示的にウィンドウを削除（メモリリーク防止）
+    del window
+
+    sys.exit(ret)
 
 
 if __name__ == '__main__':
