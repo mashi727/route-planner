@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e66f5"/>
+      <stop offset="100%" style="stop-color:#04a5e5"/>
+    </linearGradient>
+    <linearGradient id="mountain" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#40a02b"/>
+      <stop offset="100%" style="stop-color:#a6e3a1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#bg)"/>
+
+  <!-- Mountain/Elevation profile -->
+  <path d="M80 340 L160 260 L220 300 L300 180 L380 240 L432 200 L432 380 L80 380 Z"
+        fill="url(#mountain)" opacity="0.9"/>
+
+  <!-- Route line -->
+  <path d="M100 320 Q180 240, 256 280 T420 200"
+        stroke="#ffffff" stroke-width="12" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Start point -->
+  <circle cx="100" cy="320" r="20" fill="#40a02b" stroke="#ffffff" stroke-width="4"/>
+
+  <!-- End point -->
+  <circle cx="420" cy="200" r="20" fill="#d20f39" stroke="#ffffff" stroke-width="4"/>
+
+  <!-- Waypoint -->
+  <circle cx="256" cy="280" r="14" fill="#ffffff" stroke="#1e66f5" stroke-width="4"/>
+
+  <!-- Bicycle wheel (simplified) -->
+  <g transform="translate(256, 400)">
+    <circle cx="0" cy="0" r="45" fill="none" stroke="#ffffff" stroke-width="8"/>
+    <circle cx="0" cy="0" r="12" fill="#ffffff"/>
+    <!-- Spokes -->
+    <line x1="0" y1="-45" x2="0" y2="45" stroke="#ffffff" stroke-width="3"/>
+    <line x1="-45" y1="0" x2="45" y2="0" stroke="#ffffff" stroke-width="3"/>
+    <line x1="-32" y1="-32" x2="32" y2="32" stroke="#ffffff" stroke-width="3"/>
+    <line x1="-32" y1="32" x2="32" y2="-32" stroke="#ffffff" stroke-width="3"/>
+  </g>
+</svg>
