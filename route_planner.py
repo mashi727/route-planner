@@ -146,39 +146,33 @@ class RoutePlanner(QMainWindow):
         self.map_view.setContextMenuPolicy(Qt.NoContextMenu)  # 右クリックメニュー無効化
         left_layout.addWidget(self.map_view)
 
-        # グラフ（高度、斜度、Region、ヒストグラム）
+        # グラフ（高度、Region、ヒストグラム）
         self.graph_widget = pg.GraphicsLayoutWidget()
         self.graph_widget.setMinimumHeight(220)
 
-        # プロットエリアを確保
+        # プロットエリアを確保（2行: 高度、Region）
         self.dist_plot = self.graph_widget.addPlot(row=0, col=0)
-        self.slope_plot = self.graph_widget.addPlot(row=1, col=0)
-        self.region_plot = self.graph_widget.addPlot(row=2, col=0)
-        self.hist_plot = self.graph_widget.addPlot(row=0, col=1, rowspan=3)
+        self.region_plot = self.graph_widget.addPlot(row=1, col=0)
+        self.hist_plot = self.graph_widget.addPlot(row=0, col=1, rowspan=2)
 
         # レイアウト設定
         self.graph_widget.ci.layout.setColumnStretchFactor(0, 3)
         self.graph_widget.ci.layout.setColumnStretchFactor(1, 1)
         self.graph_widget.ci.layout.setRowStretchFactor(0, 10)
-        self.graph_widget.ci.layout.setRowStretchFactor(1, 6)
-        self.graph_widget.ci.layout.setRowStretchFactor(2, 1)
+        self.graph_widget.ci.layout.setRowStretchFactor(1, 4)
 
         # 高度グラフ設定
         self.dist_plot.setLabel('right', '高度(m)')
+        self.dist_plot.setLabel('left', '斜度(%)')
         self.dist_plot.showGrid(x=True, y=True, alpha=0.3)
         self.dist_plot.showAxis('right')
-        self.dist_plot.hideAxis('left')
+        self.dist_plot.showAxis('left')
         self.dist_plot.getAxis('right').setWidth(50)
+        self.dist_plot.getAxis('left').setWidth(50)
         self.dist_plot.hideAxis('bottom')
 
-        # 斜度グラフ設定
-        self.slope_plot.setLabel('right', '斜度(%)')
-        self.slope_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.slope_plot.showAxis('right')
-        self.slope_plot.hideAxis('left')
-        self.slope_plot.getAxis('right').setWidth(50)
-        self.slope_plot.setXLink(self.dist_plot)
-        self.slope_plot.hideAxis('bottom')
+        # 斜度スケール係数を保存（グラフ更新時に使用）
+        self.slope_scale_factor = 1.0
 
         # Region選択グラフ設定
         self.region_plot.setLabel('bottom', '距離(km)')
@@ -639,7 +633,6 @@ class RoutePlanner(QMainWindow):
         self.route_coordinates = []
         self.elevation_data = []
         self.dist_plot.clear()
-        self.slope_plot.clear()
         self.region_plot.clear()
         self.hist_plot.clear()
 
@@ -740,7 +733,7 @@ class RoutePlanner(QMainWindow):
         self.graph_widget.setBackground(bg_color)
 
         # 各プロットの軸の色を更新
-        for plot in [self.dist_plot, self.slope_plot, self.region_plot, self.hist_plot]:
+        for plot in [self.dist_plot, self.region_plot, self.hist_plot]:
             for axis_name in ['left', 'right', 'top', 'bottom']:
                 axis = plot.getAxis(axis_name)
                 axis.setPen(pg.mkPen(color=fg_color))
@@ -1066,7 +1059,6 @@ class RoutePlanner(QMainWindow):
             self.route_coordinates = []
             self.elevation_data = []
             self.dist_plot.clear()
-            self.slope_plot.clear()
             self.region_plot.clear()
             self.hist_plot.clear()
             return
@@ -1700,23 +1692,31 @@ class RoutePlanner(QMainWindow):
         # 斜度を計算（移動平均付き）
         self.slopes = self._calculate_slopes(distances, elevations)
 
-        # テーマに応じた色を選択（濃い色で視認性向上）
+        # テーマに応じた色を選択
         is_dark = self.current_theme == "dark"
-        elevation_color = '#04d9c4' if is_dark else '#0a7a7a'  # ライト: 中程度のティール
-        region_color = '#f5a524' if is_dark else '#b06b00'  # ライト: 中程度のオレンジ
+        elevation_color = '#04d9c4' if is_dark else '#0a7a7a'
 
-        # 高度グラフ
-        line_width = 3
-        pen_dist = pg.mkPen(color=elevation_color, width=line_width)
-        self.dist_plot.plot(distances, elevations, pen=pen_dist)
+        # 高度グラフ（下部を半透明グレーで塗りつぶし）
+        pen_dist = pg.mkPen(color=elevation_color, width=3)
+        fill_brush = pg.mkBrush(color=(128, 128, 128, 80))
+        self.dist_plot.plot(distances, elevations, pen=pen_dist, fillLevel=0, brush=fill_brush)
 
-        # 斜度グラフ（カラーマップ付き）
-        self.slope_plot.clear()
-        self.slope_plot.plot(distances, self.slopes, pen=self.slope_pen)
+        # 斜度グラフを高度0を基準に重ねる
+        # 斜度±10%が高度範囲の1/8程度になるようスケール
+        elev_max = elevations.max() if len(elevations) > 0 else 100
+        self.slope_scale_factor = elev_max / 80  # 斜度の表示幅を大きめに
+        scaled_slopes = self.slopes * self.slope_scale_factor
+        self.dist_plot.plot(distances, scaled_slopes, pen=self.slope_pen)
 
-        # Region用グラフ（太めで視認性向上）
-        region_width = 2
-        region_pen = pg.mkPen(color=region_color, width=region_width, style=Qt.DashLine)
+        # 左軸の目盛りを斜度値で表示
+        left_axis = self.dist_plot.getAxis('left')
+        slope_ticks = [(-10, '-10'), (-5, '-5'), (0, '0'), (5, '5'), (10, '10')]
+        tick_vals = [(s * self.slope_scale_factor, label) for s, label in slope_ticks]
+        left_axis.setTicks([tick_vals])
+
+        # Region用グラフ（高度を破線で表示）
+        region_color = '#f5a524' if is_dark else '#b06b00'
+        region_pen = pg.mkPen(color=region_color, width=2, style=Qt.DashLine)
         self.region_plot.plot(distances, elevations, pen=region_pen)
 
         # Regionを追加し直す（clearで消えるため）
