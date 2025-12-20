@@ -37,7 +37,7 @@ class RoutePlanner(QMainWindow):
         super().__init__()
         self.setWindowTitle("ルートプランナー")
         # ウィンドウサイズを固定（地図800x800、15%拡大）
-        self.setFixedSize(1500, 1050)
+        self.setFixedSize(1500, 950)
 
         self.waypoints = []  # [(lat, lng, name), ...]
         self.route_coordinates = []  # ルート座標
@@ -146,9 +146,9 @@ class RoutePlanner(QMainWindow):
         self.map_view.setContextMenuPolicy(Qt.NoContextMenu)  # 右クリックメニュー無効化
         left_layout.addWidget(self.map_view)
 
-        # グラフ（ver11.pyスタイル: 高度、斜度、Region、ヒストグラム）
+        # グラフ（高度、斜度、Region、ヒストグラム）
         self.graph_widget = pg.GraphicsLayoutWidget()
-        self.graph_widget.setMinimumHeight(320)
+        self.graph_widget.setMinimumHeight(220)
 
         # プロットエリアを確保
         self.dist_plot = self.graph_widget.addPlot(row=0, col=0)
@@ -183,6 +183,7 @@ class RoutePlanner(QMainWindow):
         # Region選択グラフ設定
         self.region_plot.setLabel('bottom', '距離(km)')
         self.region_plot.hideAxis('left')
+        self.region_plot.hideAxis('right')
 
         # ヒストグラム設定
         self.hist_plot.setLabel('bottom', '斜度(%)')
@@ -1687,7 +1688,6 @@ class RoutePlanner(QMainWindow):
             preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル
         """
         self.dist_plot.clear()
-        self.slope_plot.clear()
         self.region_plot.clear()
         self.hist_plot.clear()
 
@@ -1705,12 +1705,13 @@ class RoutePlanner(QMainWindow):
         elevation_color = '#04d9c4' if is_dark else '#0a7a7a'  # ライト: 中程度のティール
         region_color = '#f5a524' if is_dark else '#b06b00'  # ライト: 中程度のオレンジ
 
-        # 高度グラフ（太めに）
-        line_width = 3 if is_dark else 3  # 同じ太さに
+        # 高度グラフ
+        line_width = 3
         pen_dist = pg.mkPen(color=elevation_color, width=line_width)
         self.dist_plot.plot(distances, elevations, pen=pen_dist)
 
         # 斜度グラフ（カラーマップ付き）
+        self.slope_plot.clear()
         self.slope_plot.plot(distances, self.slopes, pen=self.slope_pen)
 
         # Region用グラフ（太めで視認性向上）
