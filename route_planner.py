@@ -18,6 +18,9 @@ import json
 import requests
 import numpy as np
 import pandas as pd
+import xml.etree.ElementTree as ET
+import zipfile
+import io
 from pathlib import Path
 import pyqtgraph as pg
 from elevation_cache import ElevationCache
@@ -37,7 +40,7 @@ class RoutePlanner(QMainWindow):
         super().__init__()
         self.setWindowTitle("ルートプランナー")
         # ウィンドウサイズを固定（地図800x800、15%拡大）
-        self.setFixedSize(1500, 950)
+        self.setFixedSize(1500, 900)
 
         self.waypoints = []  # [(lat, lng, name), ...]
         self.route_coordinates = []  # ルート座標
@@ -68,27 +71,16 @@ class RoutePlanner(QMainWindow):
         self._cleaned_up = True
 
         # すべてのタイマーを停止
-        if hasattr(self, 'poll_timer'):
-            self.poll_timer.stop()
-        if hasattr(self, 'fit_timer'):
-            self.fit_timer.stop()
-        if hasattr(self, 'search_timer'):
-            self.search_timer.stop()
+        for timer_name in ['poll_timer', 'fit_timer', 'search_timer']:
+            timer = getattr(self, timer_name, None)
+            if timer:
+                timer.stop()
 
         # WebEngineViewのクリーンアップ
         if hasattr(self, 'map_view') and self.map_view is not None:
             try:
-                # シグナル接続を切断
-                self.map_view.loadFinished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                # ページの読み込みを停止
                 self.map_view.stop()
-                # 空白ページに移動
-                self.map_view.setUrl(QUrl("about:blank"))
-                QApplication.processEvents()
-            except RuntimeError:
+            except:
                 pass
 
     def closeEvent(self, event):
@@ -142,13 +134,15 @@ class RoutePlanner(QMainWindow):
 
         # 地図（1220x1020）
         self.map_view = QWebEngineView()
-        self.map_view.setFixedSize(1020, 650)
+        self.map_view.setFixedSize(1020, 600)
         self.map_view.setContextMenuPolicy(Qt.NoContextMenu)  # 右クリックメニュー無効化
         left_layout.addWidget(self.map_view)
 
         # グラフ（高度、Region、ヒストグラム）
         self.graph_widget = pg.GraphicsLayoutWidget()
-        self.graph_widget.setMinimumHeight(220)
+        self.graph_widget.setMinimumHeight(180)
+        self.graph_widget.ci.layout.setContentsMargins(0, 10, 0, 0)
+        self.graph_widget.ci.layout.setSpacing(5)
 
         # プロットエリアを確保（2行: 高度、Region）
         self.dist_plot = self.graph_widget.addPlot(row=0, col=0)
@@ -159,7 +153,7 @@ class RoutePlanner(QMainWindow):
         self.graph_widget.ci.layout.setColumnStretchFactor(0, 3)
         self.graph_widget.ci.layout.setColumnStretchFactor(1, 1)
         self.graph_widget.ci.layout.setRowStretchFactor(0, 10)
-        self.graph_widget.ci.layout.setRowStretchFactor(1, 4)
+        self.graph_widget.ci.layout.setRowStretchFactor(1, 2)
 
         # 高度グラフ設定
         self.dist_plot.setLabel('right', '高度(m)')
@@ -169,15 +163,20 @@ class RoutePlanner(QMainWindow):
         self.dist_plot.showAxis('left')
         self.dist_plot.getAxis('right').setWidth(50)
         self.dist_plot.getAxis('left').setWidth(50)
-        self.dist_plot.hideAxis('bottom')
+        self.dist_plot.setLabel('bottom', '距離(km)')
 
         # 斜度スケール係数を保存（グラフ更新時に使用）
         self.slope_scale_factor = 1.0
 
         # Region選択グラフ設定
-        self.region_plot.setLabel('bottom', '距離(km)')
-        self.region_plot.hideAxis('left')
-        self.region_plot.hideAxis('right')
+        # 左右の軸を表示して幅を高度グラフと揃える（ラベルなし）
+        self.region_plot.showAxis('left')
+        self.region_plot.showAxis('right')
+        self.region_plot.getAxis('left').setWidth(50)
+        self.region_plot.getAxis('right').setWidth(50)
+        self.region_plot.getAxis('left').setStyle(showValues=False)
+        self.region_plot.getAxis('right').setStyle(showValues=False)
+        self.region_plot.hideAxis('bottom')
 
         # ヒストグラム設定
         self.hist_plot.setLabel('bottom', '斜度(%)')
@@ -215,8 +214,8 @@ class RoutePlanner(QMainWindow):
         # ランドマーク検索
         search_group = QGroupBox("ランドマーク検索")
         search_layout = QVBoxLayout(search_group)
-        search_layout.setSpacing(5)
-        search_layout.setContentsMargins(4, 6, 4, 6)
+        search_layout.setSpacing(1)
+        search_layout.setContentsMargins(4, 4, 4, 4)
 
         search_input_layout = QHBoxLayout()
         self.landmark_input = QLineEdit()
@@ -238,7 +237,7 @@ class RoutePlanner(QMainWindow):
 
         # 検索結果リスト
         self.search_result_list = QListWidget()
-        self.search_result_list.setMaximumHeight(150)
+        self.search_result_list.setMaximumHeight(100)
         self.search_result_list.itemDoubleClicked.connect(self.add_search_result)
         search_layout.addWidget(self.search_result_list)
 
@@ -265,8 +264,8 @@ class RoutePlanner(QMainWindow):
         # ポイントリスト
         list_group = QGroupBox("経由ポイント（地図クリックでも追加可）")
         list_group_layout = QVBoxLayout(list_group)
-        list_group_layout.setSpacing(5)
-        list_group_layout.setContentsMargins(4, 6, 4, 6)
+        list_group_layout.setSpacing(1)
+        list_group_layout.setContentsMargins(4, 4, 4, 4)
 
         # 上部: リストとボタン
         list_layout = QHBoxLayout()
@@ -301,7 +300,7 @@ class RoutePlanner(QMainWindow):
         # ルート情報（縦表示）
         info_group = QGroupBox("ルート情報")
         info_layout = QGridLayout(info_group)
-        info_layout.setSpacing(10)
+        info_layout.setSpacing(6)
         info_layout.setContentsMargins(4, 6, 4, 6)
 
         # ヘッダー行
@@ -353,7 +352,7 @@ class RoutePlanner(QMainWindow):
         # 標高データ設定
         elevation_group = QGroupBox("標高データ設定")
         elevation_layout = QGridLayout(elevation_group)
-        elevation_layout.setSpacing(10)
+        elevation_layout.setSpacing(8)
         elevation_layout.setContentsMargins(4, 6, 4, 6)
 
         self.gsi_checkbox = QCheckBox("国土地理院5mメッシュを使用")
@@ -377,10 +376,16 @@ class RoutePlanner(QMainWindow):
 
         # 保存・読み込みボタン（最下段）
         save_load_layout = QHBoxLayout()
-        load_btn = QPushButton("ルート読込")
+        gpx_btn = QPushButton("GPX")
+        gpx_btn.clicked.connect(self.load_gpx)
+        kmz_btn = QPushButton("KMZ/KML")
+        kmz_btn.clicked.connect(self.load_kmz)
+        load_btn = QPushButton("読込")
         load_btn.clicked.connect(self.load_waypoints)
-        save_btn = QPushButton("ルート保存")
+        save_btn = QPushButton("保存")
         save_btn.clicked.connect(self.save_waypoints)
+        save_load_layout.addWidget(gpx_btn)
+        save_load_layout.addWidget(kmz_btn)
         save_load_layout.addWidget(load_btn)
         save_load_layout.addWidget(save_btn)
         right_layout.addLayout(save_load_layout)
@@ -1719,6 +1724,12 @@ class RoutePlanner(QMainWindow):
         region_pen = pg.mkPen(color=region_color, width=2, style=Qt.DashLine)
         self.region_plot.plot(distances, elevations, pen=region_pen)
 
+        # 両プロットのX軸範囲を同じに設定
+        if len(distances) > 0:
+            x_min, x_max = distances[0], distances[-1]
+            self.dist_plot.setXRange(x_min, x_max, padding=0)
+            self.region_plot.setXRange(x_min, x_max, padding=0)
+
         # Regionを追加し直す（clearで消えるため）
         self.region_plot.addItem(self.region, ignoreBounds=True)
 
@@ -1882,6 +1893,227 @@ class RoutePlanner(QMainWindow):
 
             except Exception as e:
                 QMessageBox.warning(self, "エラー", f"読み込みに失敗しました:\n{e}")
+
+    def load_gpx(self):
+        """GPXファイルからルート情報を読み込み（ルート計算なし）"""
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "GPX読込", "", "GPX Files (*.gpx)"
+        )
+
+        if not filename:
+            return
+
+        try:
+            tree = ET.parse(filename)
+            root = tree.getroot()
+
+            # GPX名前空間を取得
+            ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
+            if root.tag.startswith('{'):
+                ns_uri = root.tag.split('}')[0] + '}'
+                ns = {'gpx': ns_uri[1:-1]}
+
+            # トラックポイントを抽出
+            track_points = []
+
+            # trk/trkseg/trkpt を探す
+            for trkpt in root.findall('.//gpx:trkpt', ns):
+                lat = float(trkpt.get('lat'))
+                lon = float(trkpt.get('lon'))
+                ele_elem = trkpt.find('gpx:ele', ns)
+                ele = float(ele_elem.text) if ele_elem is not None else None
+                track_points.append({'lat': lat, 'lon': lon, 'ele': ele})
+
+            # 名前空間なしでも試す
+            if not track_points:
+                for trkpt in root.findall('.//trkpt'):
+                    lat = float(trkpt.get('lat'))
+                    lon = float(trkpt.get('lon'))
+                    ele_elem = trkpt.find('ele')
+                    ele = float(ele_elem.text) if ele_elem is not None else None
+                    track_points.append({'lat': lat, 'lon': lon, 'ele': ele})
+
+            if not track_points:
+                QMessageBox.warning(self, "エラー", "GPXファイルにトラックポイントが見つかりません")
+                return
+
+            # インポートしたルートを表示
+            self._display_imported_route(track_points, "GPX")
+
+        except Exception as e:
+            QMessageBox.warning(self, "エラー", f"GPX読み込みに失敗しました:\n{e}")
+
+    def load_kmz(self):
+        """KMZ/KMLファイルからルート情報を読み込み（ルート計算なし）"""
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "KMZ/KML読込", "", "KMZ/KML Files (*.kmz *.kml)"
+        )
+
+        if not filename:
+            return
+
+        try:
+            # KMZかKMLかを判定
+            if filename.lower().endswith('.kmz'):
+                # KMZはZIPファイル、中のdoc.kmlを読み込む
+                with zipfile.ZipFile(filename, 'r') as zf:
+                    # doc.kmlまたは*.kmlファイルを探す
+                    kml_files = [f for f in zf.namelist() if f.endswith('.kml')]
+                    if not kml_files:
+                        QMessageBox.warning(self, "エラー", "KMZファイル内にKMLが見つかりません")
+                        return
+                    # doc.kmlを優先、なければ最初のkmlファイル
+                    kml_name = 'doc.kml' if 'doc.kml' in kml_files else kml_files[0]
+                    with zf.open(kml_name) as kml_file:
+                        kml_content = kml_file.read()
+                        root = ET.fromstring(kml_content)
+            else:
+                # KMLファイルを直接読み込む
+                tree = ET.parse(filename)
+                root = tree.getroot()
+
+            # KML名前空間を取得
+            ns = {'kml': 'http://www.opengis.net/kml/2.2'}
+            if root.tag.startswith('{'):
+                ns_uri = root.tag.split('}')[0] + '}'
+                ns = {'kml': ns_uri[1:-1]}
+
+            # ルート座標を抽出（LineString）
+            track_points = []
+            # 経由地を抽出（Placemark/Point）
+            waypoints = []
+
+            # Placemarkを探す
+            placemarks = root.findall('.//kml:Placemark', ns)
+            if not placemarks:
+                placemarks = root.findall('.//Placemark')
+
+            for placemark in placemarks:
+                # 名前を取得
+                name_elem = placemark.find('kml:name', ns)
+                if name_elem is None:
+                    name_elem = placemark.find('name')
+                name = name_elem.text if name_elem is not None else None
+
+                # LineString（ルート）を探す
+                linestring = placemark.find('.//kml:LineString', ns)
+                if linestring is None:
+                    linestring = placemark.find('.//LineString')
+
+                if linestring is not None:
+                    coords_elem = linestring.find('kml:coordinates', ns)
+                    if coords_elem is None:
+                        coords_elem = linestring.find('coordinates')
+                    if coords_elem is not None and coords_elem.text:
+                        coords_text = coords_elem.text.strip()
+                        for coord in coords_text.split():
+                            parts = coord.split(',')
+                            if len(parts) >= 2:
+                                lon = float(parts[0])
+                                lat = float(parts[1])
+                                ele = float(parts[2]) if len(parts) >= 3 else None
+                                track_points.append({'lat': lat, 'lon': lon, 'ele': ele})
+
+                # Point（経由地）を探す
+                point = placemark.find('.//kml:Point', ns)
+                if point is None:
+                    point = placemark.find('.//Point')
+
+                if point is not None:
+                    coords_elem = point.find('kml:coordinates', ns)
+                    if coords_elem is None:
+                        coords_elem = point.find('coordinates')
+                    if coords_elem is not None and coords_elem.text:
+                        parts = coords_elem.text.strip().split(',')
+                        if len(parts) >= 2:
+                            lon = float(parts[0])
+                            lat = float(parts[1])
+                            ele = float(parts[2]) if len(parts) >= 3 else None
+                            waypoints.append({'lat': lat, 'lon': lon, 'ele': ele, 'name': name})
+
+            # ルートがない場合は経由地から作成
+            if not track_points and waypoints:
+                track_points = [{'lat': wp['lat'], 'lon': wp['lon'], 'ele': wp.get('ele')} for wp in waypoints]
+
+            if not track_points:
+                QMessageBox.warning(self, "エラー", "KML/KMZファイルに座標データが見つかりません")
+                return
+
+            # インポートしたルートを表示（経由地情報付き）
+            self._display_imported_route(track_points, "KML", waypoints=waypoints)
+
+        except Exception as e:
+            QMessageBox.warning(self, "エラー", f"KMZ/KML読み込みに失敗しました:\n{e}")
+
+    def _display_imported_route(self, track_points, source_type="GPX", waypoints=None):
+        """インポートしたルートを表示（GPX/KML共通）
+
+        Args:
+            track_points: [{'lat': float, 'lon': float, 'ele': float or None}, ...]
+            source_type: データソース名（"GPX" or "KML"）
+            waypoints: [{'lat': float, 'lon': float, 'name': str}, ...] 経由地情報（オプション）
+        """
+        # 既存データをクリア
+        self.clear_all_points()
+
+        # ルート座標を設定（ルート計算をスキップ）
+        self.route_coordinates = [(pt['lat'], pt['lon']) for pt in track_points]
+
+        # 地図にルートを表示
+        route_json = json.dumps([[pt['lon'], pt['lat']] for pt in track_points])
+        self.map_view.page().runJavaScript(f"drawRoute({route_json});")
+
+        # 経由地情報がある場合はそれを使用
+        if waypoints and len(waypoints) > 0:
+            self.waypoints = [
+                (wp['lat'], wp['lon'], wp.get('name') or f"地点{i+1}")
+                for i, wp in enumerate(waypoints)
+            ]
+            # ポイントリストも更新
+            self.point_list.clear()
+            for lat, lng, name in self.waypoints:
+                self.point_list.addItem(f"{name} ({lat:.5f}, {lng:.5f})")
+        else:
+            # 経由地がない場合はスタートとゴールのみ
+            if len(track_points) >= 2:
+                start = track_points[0]
+                end = track_points[-1]
+                self.waypoints = [
+                    (start['lat'], start['lon'], "スタート"),
+                    (end['lat'], end['lon'], "ゴール")
+                ]
+
+        self.update_map_markers(auto_zoom=False)
+
+        # 標高データを処理
+        self._process_imported_elevation(track_points, source_type)
+
+        # 地図を全ルートにフィット
+        if self.auto_fit_checkbox.isChecked() and track_points:
+            lats = [pt['lat'] for pt in track_points]
+            lons = [pt['lon'] for pt in track_points]
+            self.map_view.page().runJavaScript(
+                f"doFitBounds({min(lats)}, {min(lons)}, {max(lats)}, {max(lons)});"
+            )
+
+    def _process_imported_elevation(self, track_points, source_type):
+        """インポートしたルートの標高データを処理
+
+        Args:
+            track_points: [{'lat': float, 'lon': float, 'ele': float or None}, ...]
+            source_type: データソース名
+        """
+        # GPX/KMLの標高データを使用するか、国土地理院から取得するか
+        has_elevation = all(pt.get('ele') is not None for pt in track_points)
+
+        if has_elevation and not self.gsi_checkbox.isChecked():
+            # インポートデータの標高を使用
+            elevations = [pt['ele'] for pt in track_points]
+            print(f"{source_type}の標高データを使用: {len(elevations)}ポイント")
+            self.analyze_elevation(elevations_from_api=elevations)
+        else:
+            # 国土地理院から標高を取得
+            self.analyze_elevation()
 
 
 def main():
