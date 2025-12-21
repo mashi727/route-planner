@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1] - 2024-12-22
+
+### Fixed
+- macOS Cmd-Q終了時のセグメンテーションフォルト完全修正
+  - PySide6 + QtWebEngine + macOSの既知問題に対応
+  - Pythonモジュールシャットダウン時のChromiumスレッド競合を回避
+  - os._exit()による直接終了で安定化
+
 ## [1.2.0] - 2024-12-21
 
 ### Added

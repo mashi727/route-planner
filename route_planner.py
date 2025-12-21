@@ -76,12 +76,25 @@ class RoutePlanner(QMainWindow):
             if timer:
                 timer.stop()
 
-        # WebEngineViewのクリーンアップ
+        # pyqtgraphシグナルを切断
+        if hasattr(self, 'region') and self.region is not None:
+            try:
+                self.region.sigRegionChanged.disconnect()
+            except:
+                pass
+
+        # WebEngineViewのクリーンアップ（Chromiumスレッド終了待機）
         if hasattr(self, 'map_view') and self.map_view is not None:
             try:
                 self.map_view.stop()
+                self.map_view.setUrl(QUrl("about:blank"))
+                self.map_view.page().deleteLater()
+                self.map_view.deleteLater()
             except:
                 pass
+
+        # イベント処理を完了させる
+        QApplication.processEvents()
 
     def closeEvent(self, event):
         """アプリケーション終了時のクリーンアップ"""
@@ -2183,19 +2196,28 @@ def main():
     window = RoutePlanner()
 
     # Cmd-Q等でのアプリ終了時にも確実にクリーンアップ
-    app.aboutToQuit.connect(window.cleanup)
+    def on_about_to_quit():
+        window.cleanup()
+        # イベント処理を複数回実行してChromiumスレッドの終了を待つ
+        for _ in range(3):
+            QApplication.processEvents()
+
+    app.aboutToQuit.connect(on_about_to_quit)
 
     # 初期テーマを適用
     window.apply_theme("dark")
     window.show()
 
-    # 終了コードを取得してから終了
+    # 終了コードを取得
     ret = app.exec()
 
-    # 明示的にウィンドウを削除（メモリリーク防止）
-    del window
-
-    sys.exit(ret)
+    # macOSでのQtWebEngine終了時クラッシュ回避
+    # Pythonのモジュールシャットダウン時にChromiumスレッドがクラッシュするため
+    # os._exit()で直接終了する（PySide6 + QtWebEngine + macOSの既知問題）
+    if sys.platform == 'darwin':
+        os._exit(ret)
+    else:
+        sys.exit(ret)
 
 
 if __name__ == '__main__':
