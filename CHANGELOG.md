@@ -1,6 +1,33 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.0] - 2024-12-21
+
+### Added
+- 地図レイヤー選択機能
+  - 国土地理院: 淡色/標準/色別標高図/航空写真
+  - OpenStreetMap / OpenTopoMap
+  - Google Maps: 道路地図/衛星写真/地形図
+- ステータスバー（地図とグラフの間に表示）
+  - 処理状況をリアルタイム表示
+  - 色分けメッセージ（info/success/warning/error）
+- GPX/KMLインポート時に始点・終点を自動追加
+  - 始点: 「スタート」として経由ポイントに追加
+  - 終点: 「ゴール」として経由ポイントに追加
+
+### Fixed
+- GPX/KMLインポート時のルート表示不具合修正
+  - 座標順序の修正（[lon, lat] → [lat, lon]）
+  - 全範囲選択時のRegionライン非表示処理
+
+## [1.1.1] - 2024-12-21
+
+### Fixed
+- バンドルアプリでのキャッシュパス修正
+  - macOS: ~/Library/Application Support/RoutePlanner/
+  - Windows: %LOCALAPPDATA%/RoutePlanner/
+  - .app内部にキャッシュが作成される問題を修正
+
+## [1.1.0] - 2024-12-21
 
 ### Added
 - GPXファイルインポート機能

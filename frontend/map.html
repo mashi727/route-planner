@@ -22,6 +22,27 @@
             font-family: 'Hiragino Sans', sans-serif;
             border: 1px solid #45475a;
         }
+        .leaflet-control-layers {
+            background: rgba(30, 30, 46, 0.95);
+            border: 1px solid #45475a;
+            border-radius: 8px;
+            color: #cdd6f4;
+        }
+        .leaflet-control-layers-toggle {
+            background-color: rgba(30, 30, 46, 0.9);
+            width: 36px;
+            height: 36px;
+        }
+        .leaflet-control-layers-list {
+            padding: 8px 12px;
+        }
+        .leaflet-control-layers label {
+            color: #cdd6f4;
+            font-size: 14px;
+        }
+        .leaflet-control-layers-separator {
+            border-top: 1px solid #45475a;
+        }
     </style>
 </head>
 <body>
@@ -30,10 +51,72 @@
     <script>
         var map = L.map('map').setView([35.6812, 139.7671], 10);
 
-        L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+        // ベースマップ定義
+        var gsiPale = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
             maxZoom: 18
-        }).addTo(map);
+        });
+
+        var gsiStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+            maxZoom: 18
+        });
+
+        var gsiRelief = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+            maxZoom: 15
+        });
+
+        var gsiPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+            attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+            maxZoom: 18
+        });
+
+        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+            maxZoom: 19
+        });
+
+        var openTopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
+            maxZoom: 17
+        });
+
+        var googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '&copy; Google',
+            maxZoom: 20
+        });
+
+        var googleSatellite = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '&copy; Google',
+            maxZoom: 20
+        });
+
+        var googleTerrain = L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '&copy; Google',
+            maxZoom: 20
+        });
+
+        // デフォルトレイヤーを追加
+        gsiPale.addTo(map);
+
+        // レイヤーコントロール
+        var baseMaps = {
+            "国土地理院 淡色": gsiPale,
+            "国土地理院 標準": gsiStd,
+            "国土地理院 色別標高図": gsiRelief,
+            "国土地理院 航空写真": gsiPhoto,
+            "OpenStreetMap": osm,
+            "OpenTopoMap": openTopo,
+            "Google 道路地図": googleStreets,
+            "Google 衛星写真": googleSatellite,
+            "Google 地形図": googleTerrain
+        };
+
+        L.control.layers(baseMaps, null, {position: 'topright'}).addTo(map);
 
         var markers = [];
         var routeLine = null;

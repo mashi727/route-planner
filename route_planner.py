@@ -89,6 +89,34 @@ class RoutePlanner(QMainWindow):
         self.cleanup()
         event.accept()
 
+    def update_status(self, message: str, level: str = "info"):
+        """ステータスバーにメッセージを表示
+
+        Args:
+            message: 表示するメッセージ
+            level: メッセージレベル ("info", "success", "warning", "error")
+        """
+        colors = {
+            "info": "#89b4fa",      # 青
+            "success": "#a6e3a1",   # 緑
+            "warning": "#f9e2af",   # 黄
+            "error": "#f38ba8",     # 赤
+        }
+        color = colors.get(level, colors["info"])
+
+        if hasattr(self, 'status_label'):
+            self.status_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {color};
+                    background-color: #313244;
+                    border-radius: 3px;
+                    padding: 2px 8px;
+                    font-size: 18px;
+                }}
+            """)
+            self.status_label.setText(message)
+            QApplication.processEvents()
+
     def init_ui(self):
         # メニューバー
         menubar = self.menuBar()
@@ -132,11 +160,25 @@ class RoutePlanner(QMainWindow):
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
 
-        # 地図（1220x1020）
+        # 地図
         self.map_view = QWebEngineView()
-        self.map_view.setFixedSize(1020, 600)
+        self.map_view.setFixedSize(1020, 567)
         self.map_view.setContextMenuPolicy(Qt.NoContextMenu)  # 右クリックメニュー無効化
         left_layout.addWidget(self.map_view)
+
+        # ステータスバー（地図とグラフの間）
+        self.status_label = QLabel("")
+        self.status_label.setFixedHeight(28)
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #89b4fa;
+                background-color: #313244;
+                border-radius: 3px;
+                padding: 2px 8px;
+                font-size: 18px;
+            }
+        """)
+        left_layout.addWidget(self.status_label)
 
         # グラフ（高度、Region、ヒストグラム）
         self.graph_widget = pg.GraphicsLayoutWidget()
@@ -432,10 +474,9 @@ class RoutePlanner(QMainWindow):
                 if data.get('code') == 'Ok' and data.get('waypoints'):
                     snapped = data['waypoints'][0]['location']
                     snapped_lng, snapped_lat = snapped[0], snapped[1]
-                    print(f"道路にスナップ: ({lat:.5f}, {lng:.5f}) -> ({snapped_lat:.5f}, {snapped_lng:.5f})")
                     return snapped_lat, snapped_lng
         except Exception as e:
-            print(f"スナップエラー: {e}")
+            self.update_status(f"スナップエラー: {e}", "warning")
 
         # スナップ失敗時は元の座標を返す
         return lat, lng
@@ -472,7 +513,7 @@ class RoutePlanner(QMainWindow):
             self.insert_waypoint_at_best_position(lat, lng)
         else:
             self.add_waypoint(lat, lng)
-            print(f"ポイント追加: {lat:.5f}, {lng:.5f}")
+            self.update_status(f"ポイント追加: {lat:.5f}, {lng:.5f}")
 
     def _process_move_event(self, index, lat, lng):
         """move イベントの遅延処理"""
@@ -489,7 +530,7 @@ class RoutePlanner(QMainWindow):
             item = self.point_list.item(index)
             if item:
                 item.setText(f"{old[2]} ({lat:.5f}, {lng:.5f})")
-            print(f"ポイント移動: {index} -> {lat:.5f}, {lng:.5f}")
+            self.update_status(f"ポイント移動: {old[2]} ({lat:.5f}, {lng:.5f})")
             # マーカー位置を更新（スナップ後の座標に）
             self.update_map_markers()
             # 自動ルート計算
@@ -510,10 +551,10 @@ class RoutePlanner(QMainWindow):
                     snapped_lng, snapped_lat = waypoint['location']
                     distance = waypoint.get('distance', 0)
                     if distance < 1000:  # 1km以内なら採用
-                        print(f"道路にスナップ: {lat:.5f},{lng:.5f} -> {snapped_lat:.5f},{snapped_lng:.5f} (距離: {distance:.0f}m)")
+                        self.update_status(f"道路にスナップ: {snapped_lat:.5f},{snapped_lng:.5f} (距離: {distance:.0f}m)")
                         return snapped_lat, snapped_lng
         except Exception as e:
-            print(f"スナップエラー: {e}")
+            self.update_status(f"スナップエラー: {e}", "warning")
         return None, None
 
     def add_waypoint(self, lat, lng, name=None):
@@ -572,7 +613,7 @@ class RoutePlanner(QMainWindow):
         # 地図を更新
         self.update_map_markers()
 
-        print(f"経由地点挿入: {insert_index}番目 ({lat:.5f}, {lng:.5f})")
+        self.update_status(f"経由地点挿入: {insert_index}番目 ({lat:.5f}, {lng:.5f})")
 
         # 自動ルート計算
         self.auto_calculate_route()
@@ -1078,7 +1119,7 @@ class RoutePlanner(QMainWindow):
             preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル
         """
         if not ORS_API_KEY:
-            print("ORS APIキーが設定されていません")
+            self.update_status("ORS APIキーが設定されていません", "error")
             return
 
         # OpenRouteService API呼び出し
@@ -1107,9 +1148,10 @@ class RoutePlanner(QMainWindow):
 
             if response.status_code != 200:
                 error_data = response.json() if response.text else {}
-                print(f"ORSエラー: {response.status_code}")
+                error_msg = f"ORSエラー: {response.status_code}"
                 if 'error' in error_data:
-                    print(f"APIエラー詳細: {error_data}")
+                    error_msg += f" - {error_data.get('error', {}).get('message', '')}"
+                self.update_status(error_msg, "error")
                 return
 
             data = response.json()
@@ -1127,7 +1169,7 @@ class RoutePlanner(QMainWindow):
                 coords = geometry['coordinates']
                 self.route_coordinates = [[c[1], c[0]] for c in coords]
             else:
-                print(f"不明なgeometry形式: {type(geometry)}")
+                self.update_status(f"不明なgeometry形式: {type(geometry)}", "error")
                 return
 
             # 地図にルートを描画
@@ -1138,9 +1180,9 @@ class RoutePlanner(QMainWindow):
             self.analyze_elevation(None, preserve_region=preserve_region)
 
         except requests.exceptions.RequestException as e:
-            print(f"ルート計算エラー: {e}")
+            self.update_status(f"ルート計算エラー: {e}", "error")
         except Exception as e:
-            print(f"ルート処理エラー: {e}")
+            self.update_status(f"ルート処理エラー: {e}", "error")
 
     def update_cache_label(self):
         """キャッシュ情報ラベルを更新"""
@@ -1216,7 +1258,6 @@ class RoutePlanner(QMainWindow):
         try:
             from geocode import get_account_info
             info = get_account_info()
-            print(f"SerpApi残り回数更新: {info}")
             if info:
                 remaining = info['plan_searches_left']
                 total = info['searches_per_month']
@@ -1231,7 +1272,6 @@ class RoutePlanner(QMainWindow):
                 self.serpapi_remaining_label.setText("(取得失敗)")
         except Exception as e:
             self.serpapi_remaining_label.setText("(エラー)")
-            print(f"SerpApi情報取得エラー: {e}")
 
     def _on_search_text_changed(self, text):
         """検索テキスト変更時（デバウンス付きインクリメンタルサーチ）"""
@@ -1279,7 +1319,7 @@ class RoutePlanner(QMainWindow):
         if self.serpapi_checkbox.isChecked() and self.serpapi_checkbox.isEnabled():
             try:
                 from geocode import get_coordinates
-                print(f"SerpAPI検索実行: {query}")
+                self.update_status(f"SerpAPI検索中: {query}")
                 result = get_coordinates(query)
                 if result:
                     self.search_results.append({
@@ -1288,13 +1328,10 @@ class RoutePlanner(QMainWindow):
                         'name': f"[Google] {result['name']}",
                         'source': 'google'
                     })
-                    print(f"SerpAPI検索結果: {result}")
-                else:
-                    print("SerpAPI検索: 結果なし")
                 # 使用後に残り回数を更新
                 self.update_serpapi_remaining()
             except Exception as e:
-                print(f"SerpAPI検索エラー: {e}")
+                self.update_status(f"SerpAPI検索エラー: {e}", "warning")
 
         # 2. Nominatim API（OSM - 駅名・施設名に強い）
         try:
@@ -1418,9 +1455,14 @@ class RoutePlanner(QMainWindow):
                 )
 
         # 選択範囲の座標を地図にハイライト表示
+        # 全範囲選択時はRegionラインを非表示（青いルートラインを見せる）
         region_coords = [self.route_coordinates[i] for i in indices]
-        coords_js = json.dumps(region_coords)
-        self.map_view.page().runJavaScript(f"drawRegionLine({coords_js});")
+        is_full_range = (len(indices) >= len(self.route_coordinates) - 1)
+        if is_full_range:
+            self.map_view.page().runJavaScript("clearRegionLine();")
+        else:
+            coords_js = json.dumps(region_coords)
+            self.map_view.page().runJavaScript(f"drawRegionLine({coords_js});")
 
         # 地図を選択範囲にフィット（1秒遅延、ユーザー操作時のみ）
         if not self._suppress_region_fit:
@@ -1522,10 +1564,10 @@ class RoutePlanner(QMainWindow):
         if elevations_from_api and len(elevations_from_api) == len(self.route_coordinates):
             # APIから取得した標高を使用
             elevations = elevations_from_api
-            print(f"API標高データを使用: {len(elevations)}ポイント")
+            self.update_status(f"標高データ取得完了: {len(elevations)}ポイント", "success")
         elif self.use_gsi_elevation:
             # 国土地理院5mメッシュから標高を取得
-            print("国土地理院5mメッシュから標高取得中...")
+            self.update_status("国土地理院5mメッシュから標高取得中...")
 
             coordinates = [(lat, lng) for lat, lng in self.route_coordinates]
 
@@ -1535,11 +1577,11 @@ class RoutePlanner(QMainWindow):
             elevations = [e if e is not None else 0 for e in elevations]
 
             self.update_cache_label()  # キャッシュ情報を更新
-            print(f"国土地理院標高データ取得完了: {len(elevations)}ポイント")
+            self.update_status(f"標高データ取得完了: {len(elevations)}ポイント", "success")
         else:
             # 標高データがない場合は0で埋める
             elevations = [0] * len(self.route_coordinates)
-            print("警告: 標高データがありません")
+            self.update_status("警告: 標高データがありません", "warning")
 
         # 橋・トンネル区間の標高補正
         if self.bridge_correction_checkbox.isChecked():
@@ -1632,7 +1674,7 @@ class RoutePlanner(QMainWindow):
                 i += 1
 
         if corrected_count > 0:
-            print(f"橋・トンネル補正: {corrected_count}ポイントを補正")
+            self.update_status(f"橋・トンネル補正: {corrected_count}ポイントを補正", "success")
 
         return elevations
 
@@ -1724,11 +1766,15 @@ class RoutePlanner(QMainWindow):
         region_pen = pg.mkPen(color=region_color, width=2, style=Qt.DashLine)
         self.region_plot.plot(distances, elevations, pen=region_pen)
 
-        # 両プロットのX軸範囲を同じに設定
+        # 両プロットのX軸・Y軸範囲を設定
         if len(distances) > 0:
             x_min, x_max = distances[0], distances[-1]
             self.dist_plot.setXRange(x_min, x_max, padding=0)
             self.region_plot.setXRange(x_min, x_max, padding=0)
+
+            # Y軸の自動スケーリング
+            self.dist_plot.enableAutoRange(axis='y')
+            self.region_plot.enableAutoRange(axis='y')
 
         # Regionを追加し直す（clearで消えるため）
         self.region_plot.addItem(self.region, ignoreBounds=True)
@@ -2059,29 +2105,37 @@ class RoutePlanner(QMainWindow):
         # ルート座標を設定（ルート計算をスキップ）
         self.route_coordinates = [(pt['lat'], pt['lon']) for pt in track_points]
 
-        # 地図にルートを表示
-        route_json = json.dumps([[pt['lon'], pt['lat']] for pt in track_points])
+        # 地図にルートを表示（Leafletは[lat, lon]形式）
+        route_json = json.dumps(self.route_coordinates)
         self.map_view.page().runJavaScript(f"drawRoute({route_json});")
 
-        # 経由地情報がある場合はそれを使用
-        if waypoints and len(waypoints) > 0:
-            self.waypoints = [
-                (wp['lat'], wp['lon'], wp.get('name') or f"地点{i+1}")
-                for i, wp in enumerate(waypoints)
-            ]
-            # ポイントリストも更新
+        # スタートとゴールを必ず追加し、中間の経由地があれば追加
+        if len(track_points) >= 2:
+            start = track_points[0]
+            end = track_points[-1]
+
+            # スタート
+            self.waypoints = [(start['lat'], start['lon'], "スタート")]
+
+            # 中間の経由地（KMLのPlacemarkなど）
+            if waypoints and len(waypoints) > 0:
+                for i, wp in enumerate(waypoints):
+                    # スタート/ゴールと重複しない経由地のみ追加
+                    wp_lat, wp_lon = wp['lat'], wp['lon']
+                    # スタート・ゴールとの距離をチェック（100m以内なら重複とみなす）
+                    dist_to_start = self.haversine(wp_lat, wp_lon, start['lat'], start['lon'])
+                    dist_to_end = self.haversine(wp_lat, wp_lon, end['lat'], end['lon'])
+                    if dist_to_start > 0.1 and dist_to_end > 0.1:  # 100m以上離れている
+                        name = wp.get('name') or f"経由{i+1}"
+                        self.waypoints.append((wp_lat, wp_lon, name))
+
+            # ゴール
+            self.waypoints.append((end['lat'], end['lon'], "ゴール"))
+
+            # ポイントリストを更新
             self.point_list.clear()
             for lat, lng, name in self.waypoints:
                 self.point_list.addItem(f"{name} ({lat:.5f}, {lng:.5f})")
-        else:
-            # 経由地がない場合はスタートとゴールのみ
-            if len(track_points) >= 2:
-                start = track_points[0]
-                end = track_points[-1]
-                self.waypoints = [
-                    (start['lat'], start['lon'], "スタート"),
-                    (end['lat'], end['lon'], "ゴール")
-                ]
 
         self.update_map_markers(auto_zoom=False)
 
@@ -2109,7 +2163,7 @@ class RoutePlanner(QMainWindow):
         if has_elevation and not self.gsi_checkbox.isChecked():
             # インポートデータの標高を使用
             elevations = [pt['ele'] for pt in track_points]
-            print(f"{source_type}の標高データを使用: {len(elevations)}ポイント")
+            self.update_status(f"{source_type}の標高データを使用: {len(elevations)}ポイント")
             self.analyze_elevation(elevations_from_api=elevations)
         else:
             # 国土地理院から標高を取得
