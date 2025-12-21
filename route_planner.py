@@ -56,6 +56,11 @@ class RoutePlanner(QMainWindow):
         self._pending_fit_coords = None
         self._suppress_region_fit = False  # プログラム的なRegion変更時のフィット抑制フラグ
 
+        # Region選択状態の保持（ポイント追加・移動時にRegionを維持するため）
+        self._region_active = False  # Region選択中かどうか（全範囲選択でない場合True）
+        self._region_start_latlng = None  # Region始点のLatLon (lat, lng)
+        self._region_end_latlng = None    # Region終点のLatLon (lat, lng)
+
         # 標高キャッシュ
         self.elevation_cache = ElevationCache()
         self.use_gsi_elevation = True  # 国土地理院標高を使用するか
@@ -546,10 +551,13 @@ class RoutePlanner(QMainWindow):
             self.update_status(f"ポイント移動: {old[2]} ({lat:.5f}, {lng:.5f})")
             # マーカー位置を更新（スナップ後の座標に）
             self.update_map_markers()
-            # 自動ルート計算
-            self.auto_calculate_route()
-            # fitBounds
-            self.fit_map_to_waypoints()
+            # 自動ルート計算（Region選択中はLatLon座標を渡して復元）
+            if self._region_active and self._region_start_latlng and self._region_end_latlng:
+                self.auto_calculate_route(preserve_region_latlng=(self._region_start_latlng, self._region_end_latlng))
+            else:
+                self.auto_calculate_route()
+                # fitBounds（Region選択中でない場合のみ）
+                self.fit_map_to_waypoints()
 
     def _snap_to_road(self, lat, lng):
         """座標を最寄りの道路にスナップ（OSRM Nearest API使用）"""
@@ -589,11 +597,13 @@ class RoutePlanner(QMainWindow):
         # 地図にマーカー追加
         self.update_map_markers()
 
-        # 自動ルート計算
-        self.auto_calculate_route()
-
-        # fitBounds
-        self.fit_map_to_waypoints()
+        # 自動ルート計算（Region選択中はLatLon座標を渡して復元）
+        if self._region_active and self._region_start_latlng and self._region_end_latlng:
+            self.auto_calculate_route(preserve_region_latlng=(self._region_start_latlng, self._region_end_latlng))
+        else:
+            self.auto_calculate_route()
+            # fitBounds（Region選択中でない場合のみ）
+            self.fit_map_to_waypoints()
 
     def insert_waypoint_at_best_position(self, lat, lng):
         """クリック位置に最も近いWaypoint区間の間にWaypointを挿入"""
@@ -628,11 +638,13 @@ class RoutePlanner(QMainWindow):
 
         self.update_status(f"経由地点挿入: {insert_index}番目 ({lat:.5f}, {lng:.5f})")
 
-        # 自動ルート計算
-        self.auto_calculate_route()
-
-        # fitBounds
-        self.fit_map_to_waypoints()
+        # 自動ルート計算（Region選択中はLatLon座標を渡して復元）
+        if self._region_active and self._region_start_latlng and self._region_end_latlng:
+            self.auto_calculate_route(preserve_region_latlng=(self._region_start_latlng, self._region_end_latlng))
+        else:
+            self.auto_calculate_route()
+            # fitBounds（Region選択中でない場合のみ）
+            self.fit_map_to_waypoints()
 
     def _distance_to_segment(self, px, py, x1, y1, x2, y2):
         """点(px, py)から線分(x1,y1)-(x2,y2)への距離を計算"""
@@ -1105,11 +1117,12 @@ class RoutePlanner(QMainWindow):
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
         """
 
-    def auto_calculate_route(self, preserve_region=None):
+    def auto_calculate_route(self, preserve_region=None, preserve_region_latlng=None):
         """ポイント変更時に自動でルートを計算
 
         Args:
-            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル
+            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル（距離ベース）
+            preserve_region_latlng: Regionの範囲を保持する場合は ((start_lat, start_lng), (end_lat, end_lng))（座標ベース）
         """
         if len(self.waypoints) < 2:
             # 2点未満の場合はルートをクリア
@@ -1120,16 +1133,21 @@ class RoutePlanner(QMainWindow):
             self.dist_plot.clear()
             self.region_plot.clear()
             self.hist_plot.clear()
+            # Region状態もリセット
+            self._region_active = False
+            self._region_start_latlng = None
+            self._region_end_latlng = None
             return
 
         # ルート計算を実行（エラーは表示しない）
-        self._calculate_route_silent(preserve_region=preserve_region)
+        self._calculate_route_silent(preserve_region=preserve_region, preserve_region_latlng=preserve_region_latlng)
 
-    def _calculate_route_silent(self, preserve_region=None):
+    def _calculate_route_silent(self, preserve_region=None, preserve_region_latlng=None):
         """ルート計算（OpenRouteService使用、エラーダイアログなし）
 
         Args:
-            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル
+            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル（距離ベース）
+            preserve_region_latlng: Regionの範囲を保持する場合は ((start_lat, start_lng), (end_lat, end_lng))（座標ベース）
         """
         if not ORS_API_KEY:
             self.update_status("ORS APIキーが設定されていません", "error")
@@ -1190,7 +1208,7 @@ class RoutePlanner(QMainWindow):
             self.map_view.page().runJavaScript(f"drawRoute({coords_js});")
 
             # 標高データを分析（国土地理院から取得）
-            self.analyze_elevation(None, preserve_region=preserve_region)
+            self.analyze_elevation(None, preserve_region=preserve_region, preserve_region_latlng=preserve_region_latlng)
 
         except requests.exceptions.RequestException as e:
             self.update_status(f"ルート計算エラー: {e}", "error")
@@ -1473,9 +1491,17 @@ class RoutePlanner(QMainWindow):
         is_full_range = (len(indices) >= len(self.route_coordinates) - 1)
         if is_full_range:
             self.map_view.page().runJavaScript("clearRegionLine();")
+            # 全範囲選択時はRegion状態をリセット
+            self._region_active = False
+            self._region_start_latlng = None
+            self._region_end_latlng = None
         else:
             coords_js = json.dumps(region_coords)
             self.map_view.page().runJavaScript(f"drawRegionLine({coords_js});")
+            # Region選択中の座標を保存（ポイント追加・移動時に維持するため）
+            self._region_active = True
+            self._region_start_latlng = (region_coords[0][0], region_coords[0][1])
+            self._region_end_latlng = (region_coords[-1][0], region_coords[-1][1])
 
         # 地図を選択範囲にフィット（1秒遅延、ユーザー操作時のみ）
         if not self._suppress_region_fit:
@@ -1554,12 +1580,13 @@ class RoutePlanner(QMainWindow):
         self._decoded_elevations = elevations if elevations else None
         return decoded
 
-    def analyze_elevation(self, elevations_from_api=None, preserve_region=None):
+    def analyze_elevation(self, elevations_from_api=None, preserve_region=None, preserve_region_latlng=None):
         """標高データを分析
 
         Args:
             elevations_from_api: APIから取得した標高データ
-            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル
+            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル（距離ベース）
+            preserve_region_latlng: Regionの範囲を保持する場合は ((start_lat, start_lng), (end_lat, end_lng))（座標ベース）
         """
         if not self.route_coordinates:
             return
@@ -1603,7 +1630,7 @@ class RoutePlanner(QMainWindow):
         self.elevation_data = list(zip(distances, elevations))
 
         # グラフ更新
-        self.update_elevation_graph(preserve_region=preserve_region)
+        self.update_elevation_graph(preserve_region=preserve_region, preserve_region_latlng=preserve_region_latlng)
 
         # 全ルートの統計計算
         self.calculate_total_statistics(distances, elevations)
@@ -1733,11 +1760,12 @@ class RoutePlanner(QMainWindow):
 
         return R * c
 
-    def update_elevation_graph(self, preserve_region=None):
+    def update_elevation_graph(self, preserve_region=None, preserve_region_latlng=None):
         """高度プロファイルグラフを更新（ver11.pyスタイル）
 
         Args:
-            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル
+            preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル（距離ベース）
+            preserve_region_latlng: Regionの範囲を保持する場合は ((start_lat, start_lng), (end_lat, end_lng))（座標ベース）
         """
         self.dist_plot.clear()
         self.region_plot.clear()
@@ -1748,6 +1776,10 @@ class RoutePlanner(QMainWindow):
 
         distances = np.array([d[0] for d in self.elevation_data])
         elevations = np.array([d[1] for d in self.elevation_data])
+
+        # preserve_region_latlngが指定されている場合、LatLonから距離に変換
+        if preserve_region_latlng is not None and preserve_region is None:
+            preserve_region = self._latlng_to_distance_region(preserve_region_latlng, distances)
 
         # 斜度を計算（移動平均付き）
         self.slopes = self._calculate_slopes(distances, elevations)
@@ -1795,6 +1827,7 @@ class RoutePlanner(QMainWindow):
         # Regionの範囲を設定（プログラム的な変更なのでフィット抑制）
         if len(distances) > 0:
             self._suppress_region_fit = True
+            region_restored = False
             try:
                 if preserve_region is not None:
                     # 保存されたRegion範囲を復元（データ範囲内にクランプ）
@@ -1803,12 +1836,89 @@ class RoutePlanner(QMainWindow):
                     # 範囲が有効な場合のみ設定
                     if min_x < max_x:
                         self.region.setRegion([min_x, max_x])
+                        region_restored = True
                     else:
                         self.region.setRegion([distances[0], distances[-1]])
                 else:
                     self.region.setRegion([distances[0], distances[-1]])
             finally:
                 self._suppress_region_fit = False
+
+            # preserve_region_latlngからRegionを復元した場合、地図もフィットさせる
+            if region_restored and preserve_region_latlng is not None:
+                # Region範囲の座標を取得
+                min_x, max_x = self.region.getRegion()
+                indices = np.where((distances >= min_x) & (distances <= max_x))[0]
+                if len(indices) > 0:
+                    region_coords = [self.route_coordinates[i] for i in indices]
+                    # Regionラインを描画
+                    is_full_range = (len(indices) >= len(self.route_coordinates) - 1)
+                    if not is_full_range:
+                        coords_js = json.dumps(region_coords)
+                        self.map_view.page().runJavaScript(f"drawRegionLine({coords_js});")
+                        # Region端マーカーを更新
+                        start_coord = region_coords[0]
+                        end_coord = region_coords[-1]
+                        self.map_view.page().runJavaScript(
+                            f"updateRegionMarkers({start_coord[0]}, {start_coord[1]}, {end_coord[0]}, {end_coord[1]});"
+                        )
+                        # Region座標を更新
+                        self._region_start_latlng = (start_coord[0], start_coord[1])
+                        self._region_end_latlng = (end_coord[0], end_coord[1])
+                    # 地図をフィット
+                    coords_js = json.dumps(region_coords)
+                    self.map_view.page().runJavaScript(f"fitToRegion({coords_js});")
+
+    def _latlng_to_distance_region(self, region_latlng, distances):
+        """LatLon座標からルート上の最近傍点を見つけて距離範囲に変換
+
+        Args:
+            region_latlng: ((start_lat, start_lng), (end_lat, end_lng))
+            distances: 距離配列
+
+        Returns:
+            (min_distance, max_distance) のタプル、または None
+        """
+        if not self.route_coordinates or len(self.route_coordinates) == 0:
+            return None
+
+        start_latlng, end_latlng = region_latlng
+
+        # 始点に最も近いルート上の点を見つける
+        start_idx = self._find_nearest_route_index(start_latlng[0], start_latlng[1])
+        # 終点に最も近いルート上の点を見つける
+        end_idx = self._find_nearest_route_index(end_latlng[0], end_latlng[1])
+
+        if start_idx is None or end_idx is None:
+            return None
+
+        # インデックスを正しい順序に
+        if start_idx > end_idx:
+            start_idx, end_idx = end_idx, start_idx
+
+        # インデックスから距離を取得
+        if start_idx < len(distances) and end_idx < len(distances):
+            return (distances[start_idx], distances[end_idx])
+
+        return None
+
+    def _find_nearest_route_index(self, lat, lng):
+        """指定座標に最も近いルート上の点のインデックスを返す"""
+        if not self.route_coordinates:
+            return None
+
+        min_dist = float('inf')
+        nearest_idx = 0
+
+        for i, coord in enumerate(self.route_coordinates):
+            coord_lat, coord_lng = coord[0], coord[1]
+            # 簡易距離計算（厳密なhaversineは不要、相対比較のため）
+            dist = (lat - coord_lat) ** 2 + (lng - coord_lng) ** 2
+            if dist < min_dist:
+                min_dist = dist
+                nearest_idx = i
+
+        return nearest_idx
 
     def _calculate_slopes(self, distances, elevations, window=50):
         """斜度を計算（移動平均付き）"""
