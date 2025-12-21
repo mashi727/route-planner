@@ -10,6 +10,8 @@
 import sqlite3
 import math
 import time
+import os
+import sys
 import requests
 from pathlib import Path
 from typing import Optional, Tuple, List
@@ -21,6 +23,31 @@ try:
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
+
+
+def get_cache_dir() -> Path:
+    """キャッシュディレクトリを取得
+
+    PyInstallerでバンドルされた場合は~/Library/Application Support/RoutePlanner/
+    開発時はスクリプトと同じディレクトリ
+    """
+    if getattr(sys, 'frozen', False):
+        # PyInstallerでバンドルされた場合
+        if sys.platform == 'darwin':
+            cache_dir = Path.home() / 'Library' / 'Application Support' / 'RoutePlanner'
+        elif sys.platform == 'win32':
+            # Windows: %LOCALAPPDATA%\RoutePlanner
+            local_app_data = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+            cache_dir = local_app_data / 'RoutePlanner'
+        else:
+            # Linux等: ~/.local/share/RoutePlanner
+            cache_dir = Path.home() / '.local' / 'share' / 'RoutePlanner'
+    else:
+        # 開発時はスクリプトと同じディレクトリ
+        cache_dir = Path(__file__).parent
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 class ElevationCache:
@@ -40,7 +67,7 @@ class ElevationCache:
             zoom_level: タイルのズームレベル（14推奨、DEM5Aは14まで）
         """
         if db_path is None:
-            db_path = Path(__file__).parent / 'elevation_cache.db'
+            db_path = get_cache_dir() / 'elevation_cache.db'
 
         self.db_path = Path(db_path)
         self.request_interval = request_interval
