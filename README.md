@@ -2,7 +2,7 @@
 
 自転車ルート計画ツール。出発地・経由地・目的地を指定して、事前に斜度や走行距離を把握できます。
 
-![Demo](route_demo.mp4)
+https://github.com/user-attachments/assets/3897af49-ccde-44be-b394-d6b775252ae9
 
 ## ダウンロード
 
