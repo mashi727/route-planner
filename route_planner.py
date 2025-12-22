@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QListWidget, QListWidgetItem, QLabel, QLineEdit,
     QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QAbstractItemView, QCheckBox, QProgressBar, QFileDialog, QMenuBar, QMenu
+    QAbstractItemView, QCheckBox, QProgressBar, QFileDialog, QMenuBar, QMenu,
+    QDialogButtonBox
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QSize
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
@@ -68,6 +69,45 @@ class RoutePlanner(QMainWindow):
 
         self.init_ui()
         self.load_map()
+
+    def _open_file_dialog(self, title, extensions, save=False):
+        """カスタムファイルダイアログを開く（拡張子フィルタ付き）
+
+        Args:
+            title: ダイアログタイトル
+            extensions: 許可する拡張子のリスト (例: ['.json'], ['.gpx'], ['.kmz', '.kml'])
+            save: True=保存ダイアログ, False=開くダイアログ
+
+        Returns:
+            選択されたファイルパス、またはNone
+        """
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+
+        if save:
+            dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+            dialog.setFileMode(QFileDialog.FileMode.AnyFile)
+        else:
+            dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+            dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+
+        # フィルタ文字列を作成（対象の拡張子のみ表示）
+        ext_str = ' '.join([f'*{ext}' for ext in extensions])
+        ext_names = '/'.join([ext.upper().replace('.', '') for ext in extensions])
+        dialog.setNameFilter(f"{ext_names} Files ({ext_str})")
+
+        # 内部のファイルシステムモデルにフィルタを適用（対象外ファイルを非表示）
+        from PySide6.QtWidgets import QFileSystemModel
+        for model in dialog.findChildren(QFileSystemModel):
+            model.setNameFilters([f'*{ext}' for ext in extensions])
+            model.setNameFilterDisables(False)  # False=非表示、True=グレーアウト
+
+        if dialog.exec() == QFileDialog.Accepted:
+            files = dialog.selectedFiles()
+            if files:
+                return files[0]
+        return None
 
     def cleanup(self):
         """リソースのクリーンアップ"""
@@ -1264,7 +1304,8 @@ class RoutePlanner(QMainWindow):
                 self,
                 "SerpAPI キーファイルを選択",
                 str(Path.home()),
-                "All Files (*)"
+                "All Files (*)",
+                options=QFileDialog.Option.DontUseNativeDialog
             )
             if file_path:
                 key_path = Path(file_path)
@@ -2021,9 +2062,7 @@ class RoutePlanner(QMainWindow):
             QMessageBox.warning(self, "エラー", "保存するルートがありません")
             return
 
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "ルート保存", "", "JSON Files (*.json)"
-        )
+        filename = self._open_file_dialog("ルート保存", ['.json'], save=True)
 
         if filename:
             if not filename.endswith('.json'):
@@ -2044,9 +2083,7 @@ class RoutePlanner(QMainWindow):
 
     def load_waypoints(self):
         """JSONファイルからルート情報を読み込み"""
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "ルート読込", "", "JSON Files (*.json)"
-        )
+        filename = self._open_file_dialog("ルート読込", ['.json'])
 
         if filename:
             try:
@@ -2065,9 +2102,7 @@ class RoutePlanner(QMainWindow):
 
     def load_gpx(self):
         """GPXファイルからルート情報を読み込み（ルート計算なし）"""
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "GPX読込", "", "GPX Files (*.gpx)"
-        )
+        filename = self._open_file_dialog("GPX読込", ['.gpx'])
 
         if not filename:
             return
@@ -2114,9 +2149,7 @@ class RoutePlanner(QMainWindow):
 
     def load_kmz(self):
         """KMZ/KMLファイルからルート情報を読み込み（ルート計算なし）"""
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "KMZ/KML読込", "", "KMZ/KML Files (*.kmz *.kml)"
-        )
+        filename = self._open_file_dialog("KMZ/KML読込", ['.kmz', '.kml'])
 
         if not filename:
             return
