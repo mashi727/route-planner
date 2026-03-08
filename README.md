@@ -65,6 +65,10 @@ https://github.com/user-attachments/assets/3897af49-ccde-44be-b394-d6b775252ae9
 ## インストール
 
 ```bash
+# 開発モード（推奨）
+pip install -e .
+
+# または依存パッケージのみインストール
 pip install -r requirements.txt
 ```
 
@@ -100,6 +104,10 @@ echo "your-api-key" > ~/.apikey/SerpApi
 ## 使用方法
 
 ```bash
+# pip install -e . でインストール済みの場合
+route-planner
+
+# または直接実行
 python route_planner.py
 ```
 
@@ -145,6 +153,7 @@ route/
 ├── .github/
 │   └── workflows/
 │       └── build.yml   # GitHub Actions ビルド設定
+├── pyproject.toml      # パッケージ設定
 ├── requirements.txt
 ├── route_planner.spec  # PyInstaller設定
 ├── CHANGELOG.md        # 変更履歴
