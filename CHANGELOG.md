@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- 公開に向けたパッケージ構成へリファクタリング（外部挙動は不変）
+  - 単一の `route_planner.py`（2367行）を `route_planner/` パッケージへ再編
+  - Qt非依存の純粋ロジックを独立モジュールへ抽出:
+    `routing`（ORSクライアント）/ `geometry`（距離・ポリライン）/
+    `elevation`（標高補正・斜度・統計）/ `io_formats`（GPX/KML/JSON）
+  - `ui/main_window.py` を薄いオーケストレーション層に、スタイルを `ui/styles.py` へ分離
+  - 純粋ロジックに pytest ユニットテストを追加（`tests/`, 30ケース）
+
+### Added
+- uv による依存管理を導入（`uv.lock` / `.python-version`）。`uv sync` / `uv run` で
+  再現可能な開発環境を構築（ビルドバックエンドは setuptools のまま）
+
+### Removed
+- 未使用の write-only 状態 `_decoded_elevations` を削除
+- 未使用依存 `pandas` を除去
+
+### Fixed
+- `pyproject.toml` の `py-modules` が `.gitignore` 済みの旧ファイルを参照していた問題を解消
+- 開発時の標高キャッシュ（`elevation_cache.db`）のパスをプロジェクトルートに固定し、
+  パッケージ化後も既存キャッシュを引き継ぐよう修正
+
 ## [1.3.1] - 2024-12-23
 
 ### Improved
