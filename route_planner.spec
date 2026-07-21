@@ -96,8 +96,8 @@ if is_macos:
         icon='assets/icon.icns',
         bundle_identifier='com.route-planner.app',
         info_plist={
-            'CFBundleShortVersionString': '1.0.0',
-            'CFBundleVersion': '1.0.0',
+            'CFBundleShortVersionString': '1.3.2',
+            'CFBundleVersion': '1.3.2',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '10.15',
         },
