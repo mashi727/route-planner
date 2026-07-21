@@ -53,6 +53,8 @@ https://github.com/user-attachments/assets/3897af49-ccde-44be-b394-d6b775252ae9
 | ルート計算 | OpenRouteService API |
 | 標高データ | 国土地理院 5mメッシュDEM |
 | キャッシュ | SQLite |
+| パッケージ管理 | uv |
+| テスト | pytest |
 | ビルド | PyInstaller |
 | CI/CD | GitHub Actions |
 
@@ -62,13 +64,24 @@ https://github.com/user-attachments/assets/3897af49-ccde-44be-b394-d6b775252ae9
 - PySide6
 - pyqtgraph
 
-## インストール
+## インストール（開発）
+
+[uv](https://docs.astral.sh/uv/) を使う方法を推奨します。
 
 ```bash
-# 開発モード（推奨）
-pip install -e .
+# uv（推奨）: .python-version と uv.lock に基づき再現可能な環境を構築
+uv sync                 # 実行のみ
+uv sync --extra dev     # テストも実行する場合（pytest 込み）
 
-# または依存パッケージのみインストール
+# 実行
+uv run route-planner
+```
+
+pip を使う場合:
+
+```bash
+pip install -e .          # 開発モード
+# または
 pip install -r requirements.txt
 ```
 
@@ -104,11 +117,14 @@ echo "your-api-key" > ~/.apikey/SerpApi
 ## 使用方法
 
 ```bash
-# pip install -e . でインストール済みの場合
+# uv 環境の場合
+uv run route-planner
+
+# インストール済み（pip install -e .）の場合
 route-planner
 
 # または直接実行
-python route_planner.py
+python -m route_planner
 ```
 
 ### 基本操作
@@ -140,42 +156,70 @@ GPXまたはKMZ/KMLファイルをインポートする場合：
 
 ## プロジェクト構造
 
+ロジックを Qt 非依存の純粋モジュールへ分離し、`ui/` を薄いオーケストレーション層とした構成です。
+
 ```
 route/
-├── route_planner.py    # メインアプリケーション
-├── config.py           # 設定管理
-├── geocode.py          # ジオコーディング (SerpAPI)
-├── elevation_cache.py  # 標高データキャッシュ
-├── frontend/
-│   └── map.html        # Leaflet地図 (HTML/CSS/JS)
-├── assets/
-│   └── icon.*          # アプリケーションアイコン
-├── .github/
-│   └── workflows/
-│       └── build.yml   # GitHub Actions ビルド設定
-├── pyproject.toml      # パッケージ設定
-├── requirements.txt
-├── route_planner.spec  # PyInstaller設定
-├── CHANGELOG.md        # 変更履歴
+├── route_planner/          # アプリケーションパッケージ
+│   ├── app.py              # エントリポイント / QApplication ライフサイクル
+│   ├── __main__.py         # `python -m route_planner`
+│   ├── resources.py        # リソースパス解決 (frozen/dev 両対応)
+│   ├── config.py           # 設定・APIキーパス管理
+│   ├── geocode.py          # ジオコーディング (SerpAPI)
+│   ├── routing.py          # ルート計算クライアント (OpenRouteService)  ← 純粋
+│   ├── geometry.py         # 距離・ポリラインデコード・最近傍          ← 純粋
+│   ├── elevation.py        # 標高補正・斜度・区間統計                  ← 純粋
+│   ├── elevation_cache.py  # 標高データの SQLite キャッシュ
+│   ├── io_formats.py       # GPX/KML/KMZ/JSON パーサ                   ← 純粋
+│   ├── ui/
+│   │   ├── main_window.py  # RoutePlanner(QMainWindow)
+│   │   └── styles.py       # テーマ・スタイルシート
+│   └── frontend/
+│       └── map.html        # Leaflet地図 (HTML/CSS/JS)
+├── tests/                  # 純粋ロジックの pytest ユニットテスト
+├── assets/icon.*           # アプリケーションアイコン (ビルド用)
+├── run.py                  # PyInstaller / 直接実行ランチャ
+├── route_planner.spec      # PyInstaller設定
+├── pyproject.toml          # パッケージ設定 (PEP 621)
+├── uv.lock                 # uv ロックファイル (再現可能な依存解決)
+├── .python-version         # uv が使う Python バージョン固定
+├── .github/workflows/build.yml  # GitHub Actions ビルド設定
+├── CHANGELOG.md
 └── README.md
 ```
+
+## テスト
+
+```bash
+uv sync --extra dev
+uv run pytest
+# pip の場合: pip install -e ".[dev]" && pytest
+```
+
+`geometry` / `elevation` / `io_formats` / `routing` の純粋ロジックは Qt を起動せずに
+テストできます（ネットワークはモック化）。
 
 ## ビルド
 
 ### ローカルビルド
 
 ```bash
+# uv（推奨）: build extra に pyinstaller が含まれる
+uv sync --extra build
+uv run python -m PyInstaller --clean route_planner.spec
+
+# pip の場合
 pip install pyinstaller
 python -m PyInstaller --clean route_planner.spec
 ```
 
 ### GitHub Actionsビルド
 
-タグをプッシュすると自動的にビルドが実行されます：
+タグをプッシュすると、GitHub Actions が uv でビルドし macOS DMG / Windows exe を生成します：
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.3.1
+git push origin v1.3.1
 ```
 
 ## 今後の予定

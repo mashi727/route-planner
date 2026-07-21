@@ -16,7 +16,7 @@ is_macos = sys.platform == 'darwin'
 
 # データファイル
 datas = [
-    ('frontend', 'frontend'),
+    ('route_planner/frontend', 'frontend'),
     ('assets', 'assets'),
 ]
 
@@ -37,7 +37,7 @@ hiddenimports = [
 ]
 
 a = Analysis(
-    ['route_planner.py'],
+    ['run.py'],
     pathex=[],
     binaries=[],
     datas=datas,

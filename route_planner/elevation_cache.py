@@ -43,8 +43,9 @@ def get_cache_dir() -> Path:
             # Linux等: ~/.local/share/RoutePlanner
             cache_dir = Path.home() / '.local' / 'share' / 'RoutePlanner'
     else:
-        # 開発時はスクリプトと同じディレクトリ
-        cache_dir = Path(__file__).parent
+        # 開発時はプロジェクトルート（パッケージの親ディレクトリ）。
+        # パッケージ化前と同じ場所を指し、既存の elevation_cache.db を引き継ぐ。
+        cache_dir = Path(__file__).resolve().parent.parent
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir

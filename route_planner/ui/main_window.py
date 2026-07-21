@@ -1,6 +1,9 @@
 """
-ルートプランニングツール
-出発地・経由地・目的地を指定して、事前に斜度や走行距離を把握する
+ルートプランナー メインウィンドウ（PySide6）
+
+出発地・経由地・目的地を指定して、事前に斜度や走行距離を把握する。
+純粋ロジックは routing / elevation / geometry / io_formats モジュールに委譲し、
+このモジュールは Qt UI とそれらの呼び出し・描画のオーケストレーションに専念する。
 """
 
 from PySide6.QtWidgets import (
@@ -18,21 +21,16 @@ import sys
 import json
 import requests
 import numpy as np
-import pandas as pd
-import xml.etree.ElementTree as ET
-import zipfile
-import io
 from pathlib import Path
 import pyqtgraph as pg
-from elevation_cache import ElevationCache
 
-# pyqtgraphのダークテーマ設定
-pg.setConfigOptions(antialias=True)
-pg.setConfigOption('background', '#1e1e2e')
-pg.setConfigOption('foreground', '#cdd6f4')
+from ..elevation_cache import ElevationCache
+from ..resources import resource_path
+from ..config import load_api_key, Config
+from .. import geometry, elevation as elevation_analysis, io_formats
+from ..routing import fetch_route, RoutingError
+from .styles import DARK_STYLESHEET, LIGHT_STYLESHEET
 
-# 設定とAPIキーの読み込み
-from config import load_api_key, Config
 ORS_API_KEY = load_api_key("openrouteservice")
 
 
@@ -46,7 +44,6 @@ class RoutePlanner(QMainWindow):
         self.waypoints = []  # [(lat, lng, name), ...]
         self.route_coordinates = []  # ルート座標
         self.elevation_data = []  # 標高データ
-        self._decoded_elevations = None  # デコードした標高
         self.slopes = np.array([])  # 斜度データ
         self.search_results = []  # ランドマーク検索結果
 
@@ -494,8 +491,8 @@ class RoutePlanner(QMainWindow):
 
     def load_map(self):
         """Leaflet地図を生成してWebViewに表示（クリック・ドラッグ対応）"""
-        # 外部HTMLファイルから読み込み
-        html_path = Path(__file__).parent / "frontend" / "map.html"
+        # 外部HTMLファイルから読み込み（frozen/dev 両対応でパス解決）
+        html_path = resource_path("frontend/map.html")
         html = html_path.read_text(encoding="utf-8")
         self.map_view.setHtml(html)
 
@@ -687,27 +684,8 @@ class RoutePlanner(QMainWindow):
             self.fit_map_to_waypoints()
 
     def _distance_to_segment(self, px, py, x1, y1, x2, y2):
-        """点(px, py)から線分(x1,y1)-(x2,y2)への距離を計算"""
-        import math
-
-        # 線分の長さの2乗
-        dx = x2 - x1
-        dy = y2 - y1
-        seg_len_sq = dx * dx + dy * dy
-
-        if seg_len_sq == 0:
-            # 線分が点の場合
-            return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
-
-        # 点から線分への射影のパラメータt (0-1の範囲にクランプ)
-        t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / seg_len_sq))
-
-        # 最近点
-        nearest_x = x1 + t * dx
-        nearest_y = y1 + t * dy
-
-        # 距離
-        return math.sqrt((px - nearest_x) ** 2 + (py - nearest_y) ** 2)
+        """点(px, py)から線分(x1,y1)-(x2,y2)への距離（geometry へ委譲）"""
+        return geometry.distance_to_segment(px, py, x1, y1, x2, y2)
 
     def _refresh_point_list(self):
         """ポイントリストの表示を更新"""
@@ -856,306 +834,8 @@ class RoutePlanner(QMainWindow):
 
     def apply_theme(self, theme):
         """テーマを適用"""
-        if theme == "dark":
-            stylesheet = self._get_dark_stylesheet()
-        else:
-            stylesheet = self._get_light_stylesheet()
+        stylesheet = DARK_STYLESHEET if theme == "dark" else LIGHT_STYLESHEET
         QApplication.instance().setStyleSheet(stylesheet)
-
-    def _get_dark_stylesheet(self):
-        """ダークテーマのスタイルシート"""
-        return """
-            QMainWindow { background-color: #1e1e2e; }
-            QWidget {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                font-family: 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo', sans-serif;
-                font-size: 18px;
-            }
-            QGroupBox {
-                background-color: transparent;
-                border: 1px solid #45475a;
-                border-radius: 8px;
-                margin-top: 8px;
-                padding: 8px;
-                padding-top: 16px;
-                font-weight: bold;
-                font-size: 18px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                top: 0px;
-                padding: 0 6px;
-                background-color: #1e1e2e;
-                color: #89b4fa;
-            }
-            QPushButton {
-                background-color: #45475a;
-                border: none;
-                border-radius: 6px;
-                padding: 12px 18px;
-                color: #cdd6f4;
-                font-weight: 500;
-                font-size: 18px;
-            }
-            QPushButton:hover { background-color: #585b70; }
-            QPushButton:pressed { background-color: #89b4fa; color: #1e1e2e; }
-            QLineEdit {
-                background-color: #313244;
-                border: 2px solid #45475a;
-                border-radius: 6px;
-                padding: 10px 14px;
-                color: #cdd6f4;
-                font-size: 18px;
-                selection-background-color: #89b4fa;
-            }
-            QLineEdit:focus { border-color: #89b4fa; }
-            QListWidget {
-                background-color: #313244;
-                border: 1px solid #45475a;
-                border-radius: 6px;
-                padding: 4px;
-                font-size: 18px;
-            }
-            QListWidget::item { padding: 8px 10px; border-radius: 4px; }
-            QListWidget::item:selected { background-color: #89b4fa; color: #1e1e2e; }
-            QListWidget::item:hover { background-color: #45475a; }
-            QComboBox {
-                background-color: #313244;
-                border: 2px solid #45475a;
-                border-radius: 6px;
-                padding: 8px 14px;
-                font-size: 18px;
-                min-width: 100px;
-            }
-            QComboBox:hover { border-color: #585b70; }
-            QComboBox:focus { border-color: #89b4fa; }
-            QComboBox::drop-down { border: none; width: 28px; }
-            QComboBox::down-arrow {
-                border-left: 6px solid transparent;
-                border-right: 6px solid transparent;
-                border-top: 7px solid #cdd6f4;
-                margin-right: 10px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #313244;
-                border: 1px solid #45475a;
-                selection-background-color: #89b4fa;
-                selection-color: #1e1e2e;
-                padding: 4px;
-            }
-            QComboBox QAbstractItemView::item {
-                padding: 8px 12px;
-                min-height: 24px;
-            }
-            QCheckBox { spacing: 10px; font-size: 18px; }
-            QCheckBox::indicator {
-                width: 20px; height: 20px;
-                border: 2px solid #45475a;
-                border-radius: 4px;
-                background-color: #313244;
-            }
-            QCheckBox::indicator:checked { background-color: #89b4fa; border-color: #89b4fa; }
-            QCheckBox::indicator:hover { border-color: #89b4fa; }
-            QTableWidget {
-                background-color: #313244;
-                border: 1px solid #45475a;
-                border-radius: 6px;
-                font-size: 18px;
-            }
-            QTableWidget::item { padding: 8px; }
-            QTableWidget::item:selected { background-color: #89b4fa; color: #1e1e2e; }
-            QHeaderView::section {
-                background-color: #45475a;
-                color: #cdd6f4;
-                padding: 10px;
-                border: none;
-                font-weight: bold;
-                font-size: 18px;
-            }
-            QProgressBar {
-                background-color: #313244;
-                border: none;
-                border-radius: 5px;
-                height: 10px;
-            }
-            QProgressBar::chunk { background-color: #89b4fa; border-radius: 5px; }
-            QLabel { color: #bac2de; font-size: 18px; }
-            QScrollBar:vertical {
-                background-color: #313244;
-                width: 14px;
-                border-radius: 7px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #45475a;
-                border-radius: 7px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover { background-color: #585b70; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-            QScrollBar:horizontal {
-                background-color: #313244;
-                height: 14px;
-                border-radius: 7px;
-            }
-            QScrollBar::handle:horizontal {
-                background-color: #45475a;
-                border-radius: 7px;
-                min-width: 30px;
-            }
-            QScrollBar::handle:horizontal:hover { background-color: #585b70; }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-        """
-
-    def _get_light_stylesheet(self):
-        """ライトテーマのスタイルシート"""
-        return """
-            QMainWindow { background-color: #eff1f5; }
-            QWidget {
-                background-color: #eff1f5;
-                color: #4c4f69;
-                font-family: 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo', sans-serif;
-                font-size: 18px;
-            }
-            QGroupBox {
-                background-color: transparent;
-                border: 1px solid #ccd0da;
-                border-radius: 8px;
-                margin-top: 8px;
-                padding: 8px;
-                padding-top: 16px;
-                font-weight: bold;
-                font-size: 18px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                top: 0px;
-                padding: 0 6px;
-                background-color: #eff1f5;
-                color: #1e66f5;
-            }
-            QPushButton {
-                background-color: #ccd0da;
-                border: none;
-                border-radius: 6px;
-                padding: 12px 18px;
-                color: #4c4f69;
-                font-weight: 500;
-                font-size: 18px;
-            }
-            QPushButton:hover { background-color: #bcc0cc; }
-            QPushButton:pressed { background-color: #1e66f5; color: #eff1f5; }
-            QLineEdit {
-                background-color: #e6e9ef;
-                border: 2px solid #ccd0da;
-                border-radius: 6px;
-                padding: 10px 14px;
-                color: #4c4f69;
-                font-size: 18px;
-                selection-background-color: #1e66f5;
-                selection-color: #eff1f5;
-            }
-            QLineEdit:focus { border-color: #1e66f5; }
-            QListWidget {
-                background-color: #e6e9ef;
-                border: 1px solid #ccd0da;
-                border-radius: 6px;
-                padding: 4px;
-                font-size: 18px;
-            }
-            QListWidget::item { padding: 8px 10px; border-radius: 4px; }
-            QListWidget::item:selected { background-color: #1e66f5; color: #eff1f5; }
-            QListWidget::item:hover { background-color: #ccd0da; }
-            QComboBox {
-                background-color: #e6e9ef;
-                border: 2px solid #ccd0da;
-                border-radius: 6px;
-                padding: 8px 14px;
-                font-size: 18px;
-                min-width: 100px;
-            }
-            QComboBox:hover { border-color: #bcc0cc; }
-            QComboBox:focus { border-color: #1e66f5; }
-            QComboBox::drop-down { border: none; width: 28px; }
-            QComboBox::down-arrow {
-                border-left: 6px solid transparent;
-                border-right: 6px solid transparent;
-                border-top: 7px solid #4c4f69;
-                margin-right: 10px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #e6e9ef;
-                border: 1px solid #ccd0da;
-                selection-background-color: #1e66f5;
-                selection-color: #eff1f5;
-                padding: 4px;
-            }
-            QComboBox QAbstractItemView::item {
-                padding: 8px 12px;
-                min-height: 24px;
-            }
-            QCheckBox { spacing: 10px; font-size: 18px; }
-            QCheckBox::indicator {
-                width: 20px; height: 20px;
-                border: 2px solid #ccd0da;
-                border-radius: 4px;
-                background-color: #e6e9ef;
-            }
-            QCheckBox::indicator:checked { background-color: #1e66f5; border-color: #1e66f5; }
-            QCheckBox::indicator:hover { border-color: #1e66f5; }
-            QTableWidget {
-                background-color: #e6e9ef;
-                border: 1px solid #ccd0da;
-                border-radius: 6px;
-                font-size: 18px;
-            }
-            QTableWidget::item { padding: 8px; }
-            QTableWidget::item:selected { background-color: #1e66f5; color: #eff1f5; }
-            QHeaderView::section {
-                background-color: #ccd0da;
-                color: #4c4f69;
-                padding: 10px;
-                border: none;
-                font-weight: bold;
-                font-size: 18px;
-            }
-            QProgressBar {
-                background-color: #ccd0da;
-                border: none;
-                border-radius: 5px;
-                height: 10px;
-            }
-            QProgressBar::chunk { background-color: #1e66f5; border-radius: 5px; }
-            QLabel { color: #5c5f77; font-size: 18px; }
-            QScrollBar:vertical {
-                background-color: #e6e9ef;
-                width: 14px;
-                border-radius: 7px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #ccd0da;
-                border-radius: 7px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover { background-color: #bcc0cc; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-            QScrollBar:horizontal {
-                background-color: #e6e9ef;
-                height: 14px;
-                border-radius: 7px;
-            }
-            QScrollBar::handle:horizontal {
-                background-color: #ccd0da;
-                border-radius: 7px;
-                min-width: 30px;
-            }
-            QScrollBar::handle:horizontal:hover { background-color: #bcc0cc; }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-        """
 
     def auto_calculate_route(self, preserve_region=None, preserve_region_latlng=None):
         """ポイント変更時に自動でルートを計算
@@ -1189,71 +869,29 @@ class RoutePlanner(QMainWindow):
             preserve_region: Regionの範囲を保持する場合は (minX, maxX) のタプル（距離ベース）
             preserve_region_latlng: Regionの範囲を保持する場合は ((start_lat, start_lng), (end_lat, end_lng))（座標ベース）
         """
-        if not ORS_API_KEY:
-            self.update_status("ORS APIキーが設定されていません", "error")
-            return
-
-        # OpenRouteService API呼び出し
-        coordinates = [[wp[1], wp[0]] for wp in self.waypoints]  # [lng, lat]形式
-        url = "https://api.openrouteservice.org/v2/directions/cycling-regular"
-
-        headers = {
-            "Authorization": ORS_API_KEY,
-            "Content-Type": "application/json"
-        }
-
-        body = {
-            "coordinates": coordinates,
-            "elevation": True,
-            "instructions": False,
-            "geometry_simplify": False,
-            "extra_info": ["steepness"],
-            "preference": "recommended",
-            "options": {
-                "avoid_features": ["ferries", "steps"]  # フェリー・階段を回避
-            }
-        }
-
+        # ルート計算は routing モジュールに委譲（HTTP・geometry解釈）
         try:
-            response = requests.post(url, json=body, headers=headers, timeout=30)
-
-            if response.status_code != 200:
-                error_data = response.json() if response.text else {}
-                error_msg = f"ORSエラー: {response.status_code}"
-                if 'error' in error_data:
-                    error_msg += f" - {error_data.get('error', {}).get('message', '')}"
-                self.update_status(error_msg, "error")
-                return
-
-            data = response.json()
-
-            # ルート座標を取得
-            geometry = data['routes'][0]['geometry']
-
-            # geometryがpolyline文字列かGeoJSON形式かを判定
-            if isinstance(geometry, str):
-                # Polyline形式をデコード（3D: 標高付き）
-                self._decoded_elevations = None
-                self.route_coordinates = self.decode_polyline(geometry, include_elevation=True)
-            elif isinstance(geometry, dict) and 'coordinates' in geometry:
-                # GeoJSON形式
-                coords = geometry['coordinates']
-                self.route_coordinates = [[c[1], c[0]] for c in coords]
-            else:
-                self.update_status(f"不明なgeometry形式: {type(geometry)}", "error")
-                return
-
-            # 地図にルートを描画
-            coords_js = json.dumps(self.route_coordinates)
-            self.map_view.page().runJavaScript(f"drawRoute({coords_js});")
-
-            # 標高データを分析（国土地理院から取得）
-            self.analyze_elevation(None, preserve_region=preserve_region, preserve_region_latlng=preserve_region_latlng)
-
-        except requests.exceptions.RequestException as e:
-            self.update_status(f"ルート計算エラー: {e}", "error")
+            result = fetch_route(
+                self.waypoints,
+                ORS_API_KEY,
+                profile=Config.ORS_PROFILE,
+                avoid_features=Config.ORS_AVOID_FEATURES,
+            )
+        except RoutingError as e:
+            self.update_status(str(e), "error")
+            return
         except Exception as e:
             self.update_status(f"ルート処理エラー: {e}", "error")
+            return
+
+        self.route_coordinates = result.coordinates
+
+        # 地図にルートを描画
+        coords_js = json.dumps(self.route_coordinates)
+        self.map_view.page().runJavaScript(f"drawRoute({coords_js});")
+
+        # 標高データを分析（国土地理院から取得）
+        self.analyze_elevation(None, preserve_region=preserve_region, preserve_region_latlng=preserve_region_latlng)
 
     def update_cache_label(self):
         """キャッシュ情報ラベルを更新"""
@@ -1264,8 +902,8 @@ class RoutePlanner(QMainWindow):
 
     def on_serpapi_checkbox_changed(self, state):
         """SerpApiチェックボックスの状態変更"""
-        from geocode import set_api_key_path
-        from config import get_api_key_path, load_api_key
+        from ..geocode import set_api_key_path
+        from ..config import get_api_key_path, load_api_key
 
         if state != 2:  # 2 = Checked
             self.serpapi_remaining_label.setText("")
@@ -1328,7 +966,7 @@ class RoutePlanner(QMainWindow):
     def update_serpapi_remaining(self):
         """SerpApi残りリクエスト数を更新"""
         try:
-            from geocode import get_account_info
+            from ..geocode import get_account_info
             info = get_account_info()
             if info:
                 remaining = info['plan_searches_left']
@@ -1390,7 +1028,7 @@ class RoutePlanner(QMainWindow):
         # 1. SerpAPI（Google AI概要から緯度経度を抽出）
         if self.serpapi_checkbox.isChecked() and self.serpapi_checkbox.isEnabled():
             try:
-                from geocode import get_coordinates
+                from ..geocode import get_coordinates
                 self.update_status(f"SerpAPI検索中: {query}")
                 result = get_coordinates(query)
                 if result:
@@ -1568,59 +1206,6 @@ class RoutePlanner(QMainWindow):
             coords_js = json.dumps(self._pending_fit_coords)
             self.map_view.page().runJavaScript(f"fitToRegion({coords_js});")
 
-    def decode_polyline(self, encoded, include_elevation=True):
-        """Google Polyline形式をデコード（3D対応：標高付き）"""
-        decoded = []
-        elevations = []
-        i = 0
-        lat = 0
-        lng = 0
-        ele = 0
-
-        while i < len(encoded):
-            # 緯度
-            shift = 0
-            result = 0
-            while i < len(encoded):
-                b = ord(encoded[i]) - 63
-                i += 1
-                result |= (b & 0x1f) << shift
-                shift += 5
-                if b < 0x20:
-                    break
-            lat += (~(result >> 1) if result & 1 else result >> 1)
-
-            # 経度
-            shift = 0
-            result = 0
-            while i < len(encoded):
-                b = ord(encoded[i]) - 63
-                i += 1
-                result |= (b & 0x1f) << shift
-                shift += 5
-                if b < 0x20:
-                    break
-            lng += (~(result >> 1) if result & 1 else result >> 1)
-
-            # 標高（3D polylineの場合）
-            if include_elevation and i < len(encoded):
-                shift = 0
-                result = 0
-                while i < len(encoded):
-                    b = ord(encoded[i]) - 63
-                    i += 1
-                    result |= (b & 0x1f) << shift
-                    shift += 5
-                    if b < 0x20:
-                        break
-                ele += (~(result >> 1) if result & 1 else result >> 1)
-                elevations.append(ele / 100.0)  # 標高は100で割る
-
-            decoded.append([lat / 1e5, lng / 1e5])
-
-        self._decoded_elevations = elevations if elevations else None
-        return decoded
-
     def analyze_elevation(self, elevations_from_api=None, preserve_region=None, preserve_region_latlng=None):
         """標高データを分析
 
@@ -1680,84 +1265,11 @@ class RoutePlanner(QMainWindow):
         self.calculate_statistics(distances, elevations)
 
     def _correct_bridge_elevations(self, distances, elevations):
-        """橋・トンネル区間の標高を補正
-
-        検出条件:
-        1. 標高が急激に低下（前後との差が大きい）
-        2. 低い標高が連続する区間
-        3. 前後の標高から推定される値と大きく乖離
-
-        補正方法:
-        - 異常区間の始点と終点を検出
-        - 線形補間で橋/トンネルの標高を推定
-        """
-        if len(elevations) < 3:
-            return elevations
-
-        elevations = list(elevations)  # コピーを作成
-        n = len(elevations)
-
-        # 1. 移動平均で「期待される標高」を計算
-        window = min(50, n // 10) if n > 100 else 5
-        expected = []
-        for i in range(n):
-            start = max(0, i - window)
-            end = min(n, i + window + 1)
-            expected.append(np.median(elevations[start:end]))
-
-        # 2. 異常区間を検出（期待値から大きく下に外れている）
-        threshold_drop = 15  # 期待値より15m以上低い場合を異常とみなす
-        anomaly_mask = [False] * n
-
-        for i in range(n):
-            # 期待値より大きく低い、または海面近く（5m以下）で周囲が高い
-            if elevations[i] < expected[i] - threshold_drop:
-                anomaly_mask[i] = True
-            elif elevations[i] < 5:
-                # 海面近くの場合、前後100点の最大標高を確認
-                start = max(0, i - 100)
-                end = min(n, i + 100)
-                nearby_max = max(elevations[start:end])
-                if nearby_max > 30:  # 周囲に30m以上の地点があれば橋の可能性
-                    anomaly_mask[i] = True
-
-        # 3. 連続した異常区間を特定
-        corrected_count = 0
-        i = 0
-        while i < n:
-            if anomaly_mask[i]:
-                # 異常区間の開始
-                start_idx = i
-                # 異常区間の終了を探す
-                while i < n and anomaly_mask[i]:
-                    i += 1
-                end_idx = i - 1
-
-                # 補正の基準点を決定
-                # 開始点: 異常区間の直前の正常点
-                ref_start_idx = start_idx - 1 if start_idx > 0 else start_idx
-                ref_start_elev = elevations[ref_start_idx] if not anomaly_mask[ref_start_idx] else expected[ref_start_idx]
-
-                # 終了点: 異常区間の直後の正常点
-                ref_end_idx = end_idx + 1 if end_idx < n - 1 else end_idx
-                ref_end_elev = elevations[ref_end_idx] if ref_end_idx < n and not anomaly_mask[ref_end_idx] else expected[ref_end_idx]
-
-                # 線形補間で補正
-                if end_idx > start_idx:
-                    for j in range(start_idx, end_idx + 1):
-                        t = (j - start_idx) / (end_idx - start_idx + 1)
-                        elevations[j] = ref_start_elev + t * (ref_end_elev - ref_start_elev)
-                        corrected_count += 1
-                else:
-                    elevations[start_idx] = (ref_start_elev + ref_end_elev) / 2
-                    corrected_count += 1
-            else:
-                i += 1
-
+        """橋・トンネル区間の標高補正（elevation へ委譲し、補正数をステータス表示）"""
+        corrected, corrected_count = elevation_analysis.correct_bridge_elevations(distances, elevations)
         if corrected_count > 0:
             self.update_status(f"橋・トンネル補正: {corrected_count}ポイントを補正", "success")
-
-        return elevations
+        return corrected
 
     def get_elevation_gsi(self, lat, lng):
         """国土地理院の標高タイルから標高を取得"""
@@ -1790,16 +1302,8 @@ class RoutePlanner(QMainWindow):
         return None
 
     def haversine(self, lat1, lng1, lat2, lng2):
-        """2点間の距離を計算（km）"""
-        import math
-        R = 6371  # 地球の半径（km）
-
-        dlat = math.radians(lat2 - lat1)
-        dlng = math.radians(lng2 - lng1)
-        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-        return R * c
+        """2点間の距離（km）（geometry へ委譲）"""
+        return geometry.haversine(lat1, lng1, lat2, lng2)
 
     def update_elevation_graph(self, preserve_region=None, preserve_region_latlng=None):
         """高度プロファイルグラフを更新（ver11.pyスタイル）
@@ -1911,153 +1415,43 @@ class RoutePlanner(QMainWindow):
                     self.map_view.page().runJavaScript(f"fitToRegion({coords_js});")
 
     def _latlng_to_distance_region(self, region_latlng, distances):
-        """LatLon座標からルート上の最近傍点を見つけて距離範囲に変換
-
-        Args:
-            region_latlng: ((start_lat, start_lng), (end_lat, end_lng))
-            distances: 距離配列
-
-        Returns:
-            (min_distance, max_distance) のタプル、または None
-        """
-        if not self.route_coordinates or len(self.route_coordinates) == 0:
-            return None
-
-        start_latlng, end_latlng = region_latlng
-
-        # 始点に最も近いルート上の点を見つける
-        start_idx = self._find_nearest_route_index(start_latlng[0], start_latlng[1])
-        # 終点に最も近いルート上の点を見つける
-        end_idx = self._find_nearest_route_index(end_latlng[0], end_latlng[1])
-
-        if start_idx is None or end_idx is None:
-            return None
-
-        # インデックスを正しい順序に
-        if start_idx > end_idx:
-            start_idx, end_idx = end_idx, start_idx
-
-        # インデックスから距離を取得
-        if start_idx < len(distances) and end_idx < len(distances):
-            return (distances[start_idx], distances[end_idx])
-
-        return None
+        """Region の LatLon 範囲を距離範囲に変換（elevation へ委譲）"""
+        return elevation_analysis.latlng_to_distance_region(
+            self.route_coordinates, region_latlng, distances
+        )
 
     def _find_nearest_route_index(self, lat, lng):
-        """指定座標に最も近いルート上の点のインデックスを返す"""
-        if not self.route_coordinates:
-            return None
-
-        min_dist = float('inf')
-        nearest_idx = 0
-
-        for i, coord in enumerate(self.route_coordinates):
-            coord_lat, coord_lng = coord[0], coord[1]
-            # 簡易距離計算（厳密なhaversineは不要、相対比較のため）
-            dist = (lat - coord_lat) ** 2 + (lng - coord_lng) ** 2
-            if dist < min_dist:
-                min_dist = dist
-                nearest_idx = i
-
-        return nearest_idx
+        """指定座標に最も近いルート上の点のインデックス（geometry へ委譲）"""
+        return geometry.find_nearest_index(self.route_coordinates, lat, lng)
 
     def _calculate_slopes(self, distances, elevations, window=50):
-        """斜度を計算（移動平均付き）"""
-        if len(distances) < 2:
-            return np.zeros(len(distances))
-
-        # 各区間の斜度を計算
-        slopes = np.zeros(len(distances))
-        for i in range(1, len(distances)):
-            dist_diff = (distances[i] - distances[i-1]) * 1000  # km to m
-            if dist_diff > 0:
-                slopes[i] = (elevations[i] - elevations[i-1]) / dist_diff * 100
-
-        # 移動平均でスムージング
-        if len(slopes) >= window:
-            kernel = np.ones(window) / window
-            slopes_smooth = np.convolve(slopes, kernel, mode='same')
-            # 端の処理
-            slopes_smooth[:window//2] = slopes[:window//2]
-            slopes_smooth[-window//2:] = slopes[-window//2:]
-            return slopes_smooth
-
-        return slopes
+        """斜度を計算（移動平均付き）（elevation へ委譲）"""
+        return elevation_analysis.calculate_slopes(distances, elevations, window)
 
     def calculate_statistics(self, distances, elevations):
-        """統計情報を計算してラベル更新"""
-        if not distances or len(distances) < 2:
+        """選択範囲の統計を計算してラベル更新"""
+        stats = elevation_analysis.route_statistics(distances, elevations)
+        if stats is None:
             return
-
-        # 選択範囲の距離
-        region_distance = distances[-1] - distances[0]
-
-        # 獲得標高
-        gain = 0
-        loss = 0
-        for i in range(1, len(elevations)):
-            diff = elevations[i] - elevations[i-1]
-            if diff > 0:
-                gain += diff
-            else:
-                loss += abs(diff)
-
-        # 勾配計算
-        slopes = []
-        for i in range(1, len(elevations)):
-            dist_diff = (distances[i] - distances[i-1]) * 1000  # km to m
-            if dist_diff > 0:
-                slope = (elevations[i] - elevations[i-1]) / dist_diff * 100
-                slopes.append(slope)
-
-        max_slope = max(slopes) if slopes else 0
-        avg_slope = sum(slopes) / len(slopes) if slopes else 0
-
-        # ラベル更新
-        self.distance_label.setText(f"{region_distance:.2f} km")
-        self.gain_label.setText(f"{gain:.0f} m")
-        self.loss_label.setText(f"{loss:.0f} m")
-        self.max_slope_label.setText(f"{max_slope:.1f} %")
-        self.avg_slope_label.setText(f"{avg_slope:.1f} %")
+        self.distance_label.setText(f"{stats['distance']:.2f} km")
+        self.gain_label.setText(f"{stats['gain']:.0f} m")
+        self.loss_label.setText(f"{stats['loss']:.0f} m")
+        self.max_slope_label.setText(f"{stats['max_slope']:.1f} %")
+        self.avg_slope_label.setText(f"{stats['avg_slope']:.1f} %")
 
     def calculate_total_statistics(self, distances, elevations):
-        """全ルートの統計情報を計算してラベル更新"""
-        if not distances or len(distances) < 2:
+        """全ルートの統計を計算してラベル更新"""
+        stats = elevation_analysis.route_statistics(distances, elevations)
+        if stats is None:
             return
-
-        # 全ルートの距離
-        total_distance = distances[-1] - distances[0]
-
-        # 獲得標高
-        gain = 0
-        loss = 0
-        for i in range(1, len(elevations)):
-            diff = elevations[i] - elevations[i-1]
-            if diff > 0:
-                gain += diff
-            else:
-                loss += abs(diff)
-
-        # 勾配計算
-        slopes = []
-        for i in range(1, len(elevations)):
-            dist_diff = (distances[i] - distances[i-1]) * 1000  # km to m
-            if dist_diff > 0:
-                slope = (elevations[i] - elevations[i-1]) / dist_diff * 100
-                slopes.append(slope)
-
-        max_slope = max(slopes) if slopes else 0
-        avg_slope = sum(slopes) / len(slopes) if slopes else 0
-
-        # 全ルートラベル更新
-        self.total_distance_label.setText(f"{total_distance:.2f} km")
-        self.total_gain_label.setText(f"{gain:.0f} m")
-        self.total_loss_label.setText(f"{loss:.0f} m")
-        self.total_max_slope_label.setText(f"{max_slope:.1f} %")
-        self.total_avg_slope_label.setText(f"{avg_slope:.1f} %")
+        self.total_distance_label.setText(f"{stats['distance']:.2f} km")
+        self.total_gain_label.setText(f"{stats['gain']:.0f} m")
+        self.total_loss_label.setText(f"{stats['loss']:.0f} m")
+        self.total_max_slope_label.setText(f"{stats['max_slope']:.1f} %")
+        self.total_avg_slope_label.setText(f"{stats['avg_slope']:.1f} %")
 
     def save_waypoints(self):
-        """ルート情報をJSONファイルに保存"""
+        """ルート情報をJSONファイルに保存（パースは io_formats へ委譲）"""
         if not self.waypoints:
             QMessageBox.warning(self, "エラー", "保存するルートがありません")
             return
@@ -2067,34 +1461,24 @@ class RoutePlanner(QMainWindow):
         if filename:
             if not filename.endswith('.json'):
                 filename += '.json'
-
-            data = {
-                "waypoints": [
-                    {"lat": lat, "lng": lng, "name": name}
-                    for lat, lng, name in self.waypoints
-                ]
-            }
-
             try:
-                with open(filename, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                io_formats.save_waypoints_json(filename, self.waypoints)
             except Exception as e:
                 QMessageBox.warning(self, "エラー", f"保存に失敗しました:\n{e}")
 
     def load_waypoints(self):
-        """JSONファイルからルート情報を読み込み"""
+        """JSONファイルからルート情報を読み込み（パースは io_formats へ委譲）"""
         filename = self._open_file_dialog("ルート読込", ['.json'])
 
         if filename:
             try:
-                with open(filename, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                waypoints = io_formats.load_waypoints_json(filename)
 
                 # 既存の地点をクリア
                 self.clear_all_points()
 
                 # 地点を追加
-                for wp in data.get("waypoints", []):
+                for wp in waypoints:
                     self.add_waypoint(wp["lat"], wp["lng"], wp.get("name"))
 
             except Exception as e:
@@ -2108,34 +1492,7 @@ class RoutePlanner(QMainWindow):
             return
 
         try:
-            tree = ET.parse(filename)
-            root = tree.getroot()
-
-            # GPX名前空間を取得
-            ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
-            if root.tag.startswith('{'):
-                ns_uri = root.tag.split('}')[0] + '}'
-                ns = {'gpx': ns_uri[1:-1]}
-
-            # トラックポイントを抽出
-            track_points = []
-
-            # trk/trkseg/trkpt を探す
-            for trkpt in root.findall('.//gpx:trkpt', ns):
-                lat = float(trkpt.get('lat'))
-                lon = float(trkpt.get('lon'))
-                ele_elem = trkpt.find('gpx:ele', ns)
-                ele = float(ele_elem.text) if ele_elem is not None else None
-                track_points.append({'lat': lat, 'lon': lon, 'ele': ele})
-
-            # 名前空間なしでも試す
-            if not track_points:
-                for trkpt in root.findall('.//trkpt'):
-                    lat = float(trkpt.get('lat'))
-                    lon = float(trkpt.get('lon'))
-                    ele_elem = trkpt.find('ele')
-                    ele = float(ele_elem.text) if ele_elem is not None else None
-                    track_points.append({'lat': lat, 'lon': lon, 'ele': ele})
+            track_points = io_formats.parse_gpx(filename)
 
             if not track_points:
                 QMessageBox.warning(self, "エラー", "GPXファイルにトラックポイントが見つかりません")
@@ -2155,87 +1512,7 @@ class RoutePlanner(QMainWindow):
             return
 
         try:
-            # KMZかKMLかを判定
-            if filename.lower().endswith('.kmz'):
-                # KMZはZIPファイル、中のdoc.kmlを読み込む
-                with zipfile.ZipFile(filename, 'r') as zf:
-                    # doc.kmlまたは*.kmlファイルを探す
-                    kml_files = [f for f in zf.namelist() if f.endswith('.kml')]
-                    if not kml_files:
-                        QMessageBox.warning(self, "エラー", "KMZファイル内にKMLが見つかりません")
-                        return
-                    # doc.kmlを優先、なければ最初のkmlファイル
-                    kml_name = 'doc.kml' if 'doc.kml' in kml_files else kml_files[0]
-                    with zf.open(kml_name) as kml_file:
-                        kml_content = kml_file.read()
-                        root = ET.fromstring(kml_content)
-            else:
-                # KMLファイルを直接読み込む
-                tree = ET.parse(filename)
-                root = tree.getroot()
-
-            # KML名前空間を取得
-            ns = {'kml': 'http://www.opengis.net/kml/2.2'}
-            if root.tag.startswith('{'):
-                ns_uri = root.tag.split('}')[0] + '}'
-                ns = {'kml': ns_uri[1:-1]}
-
-            # ルート座標を抽出（LineString）
-            track_points = []
-            # 経由地を抽出（Placemark/Point）
-            waypoints = []
-
-            # Placemarkを探す
-            placemarks = root.findall('.//kml:Placemark', ns)
-            if not placemarks:
-                placemarks = root.findall('.//Placemark')
-
-            for placemark in placemarks:
-                # 名前を取得
-                name_elem = placemark.find('kml:name', ns)
-                if name_elem is None:
-                    name_elem = placemark.find('name')
-                name = name_elem.text if name_elem is not None else None
-
-                # LineString（ルート）を探す
-                linestring = placemark.find('.//kml:LineString', ns)
-                if linestring is None:
-                    linestring = placemark.find('.//LineString')
-
-                if linestring is not None:
-                    coords_elem = linestring.find('kml:coordinates', ns)
-                    if coords_elem is None:
-                        coords_elem = linestring.find('coordinates')
-                    if coords_elem is not None and coords_elem.text:
-                        coords_text = coords_elem.text.strip()
-                        for coord in coords_text.split():
-                            parts = coord.split(',')
-                            if len(parts) >= 2:
-                                lon = float(parts[0])
-                                lat = float(parts[1])
-                                ele = float(parts[2]) if len(parts) >= 3 else None
-                                track_points.append({'lat': lat, 'lon': lon, 'ele': ele})
-
-                # Point（経由地）を探す
-                point = placemark.find('.//kml:Point', ns)
-                if point is None:
-                    point = placemark.find('.//Point')
-
-                if point is not None:
-                    coords_elem = point.find('kml:coordinates', ns)
-                    if coords_elem is None:
-                        coords_elem = point.find('coordinates')
-                    if coords_elem is not None and coords_elem.text:
-                        parts = coords_elem.text.strip().split(',')
-                        if len(parts) >= 2:
-                            lon = float(parts[0])
-                            lat = float(parts[1])
-                            ele = float(parts[2]) if len(parts) >= 3 else None
-                            waypoints.append({'lat': lat, 'lon': lon, 'ele': ele, 'name': name})
-
-            # ルートがない場合は経由地から作成
-            if not track_points and waypoints:
-                track_points = [{'lat': wp['lat'], 'lon': wp['lon'], 'ele': wp.get('ele')} for wp in waypoints]
+            track_points, waypoints = io_formats.parse_kml_kmz(filename)
 
             if not track_points:
                 QMessageBox.warning(self, "エラー", "KML/KMZファイルに座標データが見つかりません")
@@ -2324,44 +1601,3 @@ class RoutePlanner(QMainWindow):
         else:
             # 国土地理院から標高を取得
             self.analyze_elevation()
-
-
-def main():
-    # QWebEngineのクラッシュを防ぐための設定
-    import os
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
-
-    app = QApplication(sys.argv)
-
-    # アプリケーション終了時のクリーンアップを確実に
-    app.setQuitOnLastWindowClosed(True)
-
-    window = RoutePlanner()
-
-    # Cmd-Q等でのアプリ終了時にも確実にクリーンアップ
-    def on_about_to_quit():
-        window.cleanup()
-        # イベント処理を複数回実行してChromiumスレッドの終了を待つ
-        for _ in range(3):
-            QApplication.processEvents()
-
-    app.aboutToQuit.connect(on_about_to_quit)
-
-    # 初期テーマを適用
-    window.apply_theme("dark")
-    window.show()
-
-    # 終了コードを取得
-    ret = app.exec()
-
-    # macOSでのQtWebEngine終了時クラッシュ回避
-    # Pythonのモジュールシャットダウン時にChromiumスレッドがクラッシュするため
-    # os._exit()で直接終了する（PySide6 + QtWebEngine + macOSの既知問題）
-    if sys.platform == 'darwin':
-        os._exit(ret)
-    else:
-        sys.exit(ret)
-
-
-if __name__ == '__main__':
-    main()

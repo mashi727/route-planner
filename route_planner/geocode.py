@@ -9,7 +9,7 @@ from pathlib import Path
 
 import requests
 
-from config import load_api_key as _load_api_key
+from .config import load_api_key as _load_api_key
 
 # カスタムキーパス（Noneの場合はデフォルトパスを使用）
 _custom_key_path: Path | None = None
