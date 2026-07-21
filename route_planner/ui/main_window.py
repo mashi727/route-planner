@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QLabel, QLineEdit,
     QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QAbstractItemView, QCheckBox, QProgressBar, QFileDialog, QMenuBar, QMenu,
-    QDialogButtonBox, QSplitter, QSizePolicy
+    QDialogButtonBox, QSplitter, QSizePolicy, QComboBox
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QSize
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
@@ -26,7 +26,9 @@ import pyqtgraph as pg
 
 from ..elevation_cache import ElevationCache
 from ..resources import resource_path
-from ..config import load_api_key, Config
+from ..config import (
+    load_api_key, Config, TRAVEL_MODES, DEFAULT_TRAVEL_MODE_KEY, get_travel_mode,
+)
 from .. import geometry, elevation as elevation_analysis, io_formats
 from ..routing import fetch_route, RoutingError
 from .styles import DARK_STYLESHEET, LIGHT_STYLESHEET
@@ -59,6 +61,9 @@ class RoutePlanner(QMainWindow):
         self._region_active = False  # Region選択中かどうか（全範囲選択でない場合True）
         self._region_start_latlng = None  # Region始点のLatLon (lat, lng)
         self._region_end_latlng = None    # Region終点のLatLon (lat, lng)
+
+        # 移動手段（ルート計算プロファイルと道路スナップに影響）
+        self.travel_mode = get_travel_mode(DEFAULT_TRAVEL_MODE_KEY)
 
         # 標高キャッシュ
         self.elevation_cache = ElevationCache()
@@ -327,6 +332,22 @@ class RoutePlanner(QMainWindow):
         right_layout.setContentsMargins(4, 4, 4, 4)
         right_widget.setMinimumWidth(360)
 
+        # 移動手段（ルート計算プロファイル＋道路スナップに反映）
+        mode_group = QGroupBox("移動手段")
+        mode_layout = QHBoxLayout(mode_group)
+        mode_layout.setContentsMargins(4, 6, 4, 6)
+
+        self.travel_mode_combo = QComboBox()
+        for mode in TRAVEL_MODES:
+            self.travel_mode_combo.addItem(mode.label, mode.key)
+        self.travel_mode_combo.setCurrentIndex(
+            self.travel_mode_combo.findData(self.travel_mode.key)
+        )
+        self.travel_mode_combo.currentIndexChanged.connect(self.on_travel_mode_changed)
+        mode_layout.addWidget(self.travel_mode_combo, stretch=1)
+
+        right_layout.addWidget(mode_group)
+
         # ランドマーク検索
         search_group = QGroupBox("ランドマーク検索")
         search_layout = QVBoxLayout(search_group)
@@ -533,25 +554,33 @@ class RoutePlanner(QMainWindow):
         self.map_view.page().runJavaScript("getEvents()", self.handle_map_events)
 
     def snap_to_road(self, lat, lng):
-        """クリック位置を最寄りの道路座標にスナップ
+        """クリック位置を現在の移動手段に応じて最寄りの道路座標にスナップ
+
+        OSRM Nearest API を使用する。スナップ先が遠すぎる場合（1km超）や
+        失敗時は元の座標をそのまま返す。
 
         Args:
             lat: 緯度
             lng: 経度
 
         Returns:
-            (snapped_lat, snapped_lng) または スナップ失敗時は (lat, lng)
+            (snapped_lat, snapped_lng)。スナップできない場合は (lat, lng)
         """
+        profile = self.travel_mode.osrm_profile
         try:
-            # OSRM nearest APIを使用（自転車用）
-            url = f"https://router.project-osrm.org/nearest/v1/bike/{lng},{lat}"
+            url = f"https://router.project-osrm.org/nearest/v1/{profile}/{lng},{lat}"
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
                 data = response.json()
                 if data.get('code') == 'Ok' and data.get('waypoints'):
-                    snapped = data['waypoints'][0]['location']
-                    snapped_lng, snapped_lat = snapped[0], snapped[1]
-                    return snapped_lat, snapped_lng
+                    waypoint = data['waypoints'][0]
+                    snapped_lng, snapped_lat = waypoint['location']
+                    distance = waypoint.get('distance', 0)
+                    if distance < 1000:  # 1km以内なら採用
+                        self.update_status(
+                            f"道路にスナップ: {snapped_lat:.5f},{snapped_lng:.5f} (距離: {distance:.0f}m)"
+                        )
+                        return snapped_lat, snapped_lng
         except Exception as e:
             self.update_status(f"スナップエラー: {e}", "warning")
 
@@ -589,7 +618,8 @@ class RoutePlanner(QMainWindow):
         if len(self.waypoints) >= 2 and self.route_coordinates:
             self.insert_waypoint_at_best_position(lat, lng)
         else:
-            self.add_waypoint(lat, lng)
+            # 上で既にスナップ済みなので再スナップしない
+            self.add_waypoint(lat, lng, snap=False)
             self.update_status(f"ポイント追加: {lat:.5f}, {lng:.5f}")
 
     def _process_move_event(self, index, lat, lng):
@@ -618,34 +648,20 @@ class RoutePlanner(QMainWindow):
                 # fitBounds（Region選択中でない場合のみ）
                 self.fit_map_to_waypoints()
 
-    def _snap_to_road(self, lat, lng):
-        """座標を最寄りの道路にスナップ（OSRM Nearest API使用）"""
-        try:
-            # OSRMのNearest API（自転車プロファイル）
-            url = f"http://router.project-osrm.org/nearest/v1/bike/{lng},{lat}"
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('code') == 'Ok' and data.get('waypoints'):
-                    waypoint = data['waypoints'][0]
-                    snapped_lng, snapped_lat = waypoint['location']
-                    distance = waypoint.get('distance', 0)
-                    if distance < 1000:  # 1km以内なら採用
-                        self.update_status(f"道路にスナップ: {snapped_lat:.5f},{snapped_lng:.5f} (距離: {distance:.0f}m)")
-                        return snapped_lat, snapped_lng
-        except Exception as e:
-            self.update_status(f"スナップエラー: {e}", "warning")
-        return None, None
+    def add_waypoint(self, lat, lng, name=None, snap=True):
+        """ウェイポイントを追加する
 
-    def add_waypoint(self, lat, lng, name=None):
-        """ウェイポイントを追加（道路にスナップ）"""
+        Args:
+            lat, lng: 座標
+            name: 表示名（省略時は連番）
+            snap: 道路スナップを行うか。呼び出し元で既にスナップ済みの場合は
+                  False を渡して二重のAPI呼び出しを避ける。
+        """
         if name is None:
             name = f"地点{len(self.waypoints) + 1}"
 
-        # 道路にスナップ
-        snapped_lat, snapped_lng = self._snap_to_road(lat, lng)
-        if snapped_lat is not None:
-            lat, lng = snapped_lat, snapped_lng
+        if snap:
+            lat, lng = self.snap_to_road(lat, lng)
 
         self.waypoints.append((lat, lng, name))
 
@@ -816,6 +832,27 @@ class RoutePlanner(QMainWindow):
         if len(self.waypoints) >= 2:
             self.auto_calculate_route()
 
+    def on_travel_mode_changed(self, index):
+        """移動手段の変更時：プロファイルを切り替えてルートを再計算
+
+        既存の経由ポイントはそのまま使い、ルートのみ新しい移動手段で引き直す。
+        （道路スナップは以降の追加・移動時から新しいプロファイルが適用される）
+        """
+        key = self.travel_mode_combo.itemData(index)
+        if key is None:
+            return
+        self.travel_mode = get_travel_mode(key)
+        self.update_status(f"移動手段を「{self.travel_mode.label}」に変更", "info")
+
+        if len(self.waypoints) >= 2:
+            # Region選択中は範囲を維持したまま再計算
+            if self._region_active and self._region_start_latlng and self._region_end_latlng:
+                self.auto_calculate_route(
+                    preserve_region_latlng=(self._region_start_latlng, self._region_end_latlng)
+                )
+            else:
+                self.auto_calculate_route()
+
     def set_theme(self, theme):
         """テーマを設定"""
         self.current_theme = theme
@@ -896,8 +933,8 @@ class RoutePlanner(QMainWindow):
             result = fetch_route(
                 self.waypoints,
                 ORS_API_KEY,
-                profile=Config.ORS_PROFILE,
-                avoid_features=Config.ORS_AVOID_FEATURES,
+                profile=self.travel_mode.ors_profile,
+                avoid_features=self.travel_mode.avoid_features,
             )
         except RoutingError as e:
             self.update_status(str(e), "error")
