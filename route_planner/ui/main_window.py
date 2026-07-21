@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QLabel, QLineEdit,
     QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QAbstractItemView, QCheckBox, QProgressBar, QFileDialog, QMenuBar, QMenu,
-    QDialogButtonBox
+    QDialogButtonBox, QSplitter, QSizePolicy
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QSize
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
@@ -38,8 +38,9 @@ class RoutePlanner(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ルートプランナー")
-        # ウィンドウサイズを固定（地図800x800、15%拡大）
-        self.setFixedSize(1500, 900)
+        # ウィンドウサイズは可変（初期サイズ＋最小サイズのみ指定）
+        self.resize(1500, 900)
+        self.setMinimumSize(1000, 640)
 
         self.waypoints = []  # [(lat, lng, name), ...]
         self.route_coordinates = []  # ルート座標
@@ -211,15 +212,27 @@ class RoutePlanner(QMainWindow):
 
         main_layout = QHBoxLayout(central_widget)
 
-        # 左側: 地図とグラフ
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
+        # 左右分割スプリッター（左: 地図+グラフ / 右: 操作パネル）
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        main_layout.addWidget(self.main_splitter)
 
-        # 地図
+        # 左側: 地図とグラフを上下スプリッターで分割
+        self.left_splitter = QSplitter(Qt.Vertical)
+        self.left_splitter.setChildrenCollapsible(False)
+
+        # 地図（可変。最小サイズのみ指定して余剰を吸収させる）
         self.map_view = QWebEngineView()
-        self.map_view.setFixedSize(1020, 567)
+        self.map_view.setMinimumSize(360, 240)
+        self.map_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.map_view.setContextMenuPolicy(Qt.NoContextMenu)  # 右クリックメニュー無効化
-        left_layout.addWidget(self.map_view)
+        self.left_splitter.addWidget(self.map_view)
+
+        # 下部ペイン: ステータスバー + グラフ（ひとまとまりで伸縮）
+        graph_pane = QWidget()
+        graph_pane_layout = QVBoxLayout(graph_pane)
+        graph_pane_layout.setContentsMargins(0, 0, 0, 0)
+        graph_pane_layout.setSpacing(4)
 
         # ステータスバー（地図とグラフの間）
         self.status_label = QLabel("")
@@ -233,7 +246,7 @@ class RoutePlanner(QMainWindow):
                 font-size: 18px;
             }
         """)
-        left_layout.addWidget(self.status_label)
+        graph_pane_layout.addWidget(self.status_label)
 
         # グラフ（高度、Region、ヒストグラム）
         self.graph_widget = pg.GraphicsLayoutWidget()
@@ -297,16 +310,22 @@ class RoutePlanner(QMainWindow):
         self.region_plot.addItem(self.region, ignoreBounds=True)
         self.region.sigRegionChanged.connect(self.on_region_changed)
 
-        left_layout.addWidget(self.graph_widget, stretch=1)
+        graph_pane_layout.addWidget(self.graph_widget, stretch=1)
 
-        main_layout.addWidget(left_widget, stretch=3)
+        # 上下スプリッターへ配置（余剰は地図寄りに配分）
+        self.left_splitter.addWidget(graph_pane)
+        self.left_splitter.setStretchFactor(0, 3)  # 地図
+        self.left_splitter.setStretchFactor(1, 2)  # ステータス+グラフ
+        self.left_splitter.setSizes([567, 300])    # 従来の比率を初期値に
 
-        # 右側: コントロールパネル
+        self.main_splitter.addWidget(self.left_splitter)
+
+        # 右側: コントロールパネル（幅は可変だが余剰は地図側へ）
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setSpacing(14)
         right_layout.setContentsMargins(4, 4, 4, 4)
-        right_widget.setFixedWidth(450)
+        right_widget.setMinimumWidth(360)
 
         # ランドマーク検索
         search_group = QGroupBox("ランドマーク検索")
@@ -469,8 +488,6 @@ class RoutePlanner(QMainWindow):
 
         right_layout.addWidget(elevation_group)
 
-        right_layout.addStretch()
-
         # 保存・読み込みボタン（最下段）
         save_load_layout = QHBoxLayout()
         gpx_btn = QPushButton("GPX")
@@ -487,7 +504,12 @@ class RoutePlanner(QMainWindow):
         save_load_layout.addWidget(save_btn)
         right_layout.addLayout(save_load_layout)
 
-        main_layout.addWidget(right_widget, stretch=1)
+        # 左右スプリッターへ配置。ウィンドウ拡大時の余剰は左（地図側）が吸収し、
+        # 右パネルは自然な幅を保つ（ドラッグでの手動調整は可能）。
+        self.main_splitter.addWidget(right_widget)
+        self.main_splitter.setStretchFactor(0, 1)  # 左: 地図+グラフ
+        self.main_splitter.setStretchFactor(1, 0)  # 右: 操作パネル
+        self.main_splitter.setSizes([1020, 450])   # 従来の比率を初期値に
 
     def load_map(self):
         """Leaflet地図を生成してWebViewに表示（クリック・ドラッグ対応）"""
