@@ -4,6 +4,14 @@
 
 https://github.com/user-attachments/assets/3897af49-ccde-44be-b394-d6b775252ae9
 
+## 考え方
+
+何が問題で、それをどう解いているかを PAD（問題分析図）で示します。各段の詳細は下の各節を参照してください。
+
+<img src="docs/pad/concept.png" alt="考え方の PAD。走る前にルートの斜度と距離をつかむため、地図上の地点か GPX・KMZ からルートを用意し、標高を付けて補正し、斜度を色分けして描き、区間を選んで統計を見る" width="100%">
+
+<sub>図の元は [`docs/pad/concept.spd`](docs/pad/concept.spd)。[padkit](https://github.com/mashi727/padkit) で検査・描画しています。</sub>
+
 ## ダウンロード
 
 | OS | ダウンロード |
